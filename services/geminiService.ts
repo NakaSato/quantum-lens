@@ -211,22 +211,33 @@ export const generateCircuitFromText = async (prompt: string): Promise<Gate[]> =
   return []; 
 };
 
-// ... (keep generateHardwareCode and solveQuantumProblem) ...
-export const generateHardwareCode = async (platform: string): Promise<string> => {
+export const generateHardwareCode = async (platform: string, mode: 'pwm' | 'neopixel' = 'pwm'): Promise<string> => {
   const model = "gemini-3-pro-preview";
+  
+  const modeContext = mode === 'neopixel' 
+    ? `Mode: NEOPIXEL (Smart LEDs). 
+       - Expect JSON format: {"n": [[R,G,B], [R,G,B], ...]} where values are 0-255.
+       - Use 'Adafruit_NeoPixel' library for Arduino/ESP32 or 'neopixel' for MicroPython.
+       - Use 4 LEDs on Data Pin 6 (Arduino), 16 (ESP32), or 0 (Pico).`
+    : `Mode: PWM (Standard LEDs).
+       - Expect JSON format: {"q": [v0, v1, v2, v3]} where v is 0-255 brightness.
+       - Map to PWM pins.`;
+
   const prompt = `
     Generate complete, compilable firmware code for the "${platform}" to work with the QuantumLens Hardware Bridge.
+    
+    ${modeContext}
+
     Requirements:
     1. Initialize Serial communication at 115200 baud.
-    2. Listen for newline-terminated JSON strings. Format: {"q": [v0, v1, v2, v3]} where v is 0-255.
-    3. Parse the JSON (using ArduinoJson for C++ or ujson for Python).
-    4. Write the values to 4 PWM-capable pins.
-    5. Print "DEBUG: Received <value>" back to Serial.
-    Specifics:
-    - Arduino Uno: pins 3, 5, 6, 9. <ArduinoJson.h>.
-    - ESP32: pins 16, 17, 18, 19.
-    - Pico: GP0, GP1, GP2, GP3. 'machine.PWM'.
-    Output ONLY code, no markdown.
+    2. Listen for newline-terminated JSON strings.
+    3. Parse the JSON (using 'ArduinoJson' for C++ or 'ujson' for Python).
+    4. Apply values to LEDs based on Mode.
+    5. INPUT HANDLING: Add a physical button (on Pin 2 or GP2).
+       - When pressed (debounce it), send '{"cmd": "next"}' via Serial to the computer.
+       - This allows the user to step through the circuit using hardware.
+    
+    Output ONLY code, no markdown explanations.
   `;
   try {
     const response = await ai.models.generateContent({
@@ -308,5 +319,63 @@ export const solveQuantumProblem = async (problem: string): Promise<QuantumAlgor
     } catch (e) {
         console.error("Solver Error", e);
         return null;
+    }
+};
+
+export interface RigSpecification {
+    name: string;
+    description: string;
+    theme: 'gold' | 'cyber' | 'lab';
+    coreColor: string;
+    stages: number;
+    cableStyle: 'messy' | 'clean' | 'fiber';
+}
+
+export const generateRigSpecification = async (numQubits: number, depth: number): Promise<RigSpecification> => {
+    const model = "gemini-2.5-flash"; 
+    
+    const prompt = `
+        Analyze a quantum circuit with ${numQubits} qubits and depth ${depth}.
+        Invent a fictional, high-tech quantum computer model that would be required to run this specific circuit.
+        
+        Return a JSON object with:
+        - name: A cool sci-fi name (e.g., "Chronos-4 Dilution", "Sycamore Prime").
+        - description: A 2-sentence marketing description of its capability.
+        - theme: Visual style, strictly one of: 'gold' (Steampunk/IBM style), 'cyber' (Neon/Dark), 'lab' (Clean/White).
+        - coreColor: Hex code for the glowing core (e.g., #00ff00).
+        - stages: Number of cooling stages (integer 3-8).
+        - cableStyle: 'messy' (lots of coax), 'clean' (hidden wiring), or 'fiber' (glowing optical).
+    `;
+
+    try {
+        const response = await ai.models.generateContent({
+            model: model,
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        name: { type: Type.STRING },
+                        description: { type: Type.STRING },
+                        theme: { type: Type.STRING, enum: ['gold', 'cyber', 'lab'] },
+                        coreColor: { type: Type.STRING },
+                        stages: { type: Type.INTEGER },
+                        cableStyle: { type: Type.STRING, enum: ['messy', 'clean', 'fiber'] }
+                    },
+                    required: ['name', 'description', 'theme', 'coreColor', 'stages', 'cableStyle']
+                }
+            }
+        });
+        return JSON.parse(response.text || "{}") as RigSpecification;
+    } catch (e) {
+        return {
+            name: "Generic QPU",
+            description: "Standard quantum processing unit.",
+            theme: "gold",
+            coreColor: "#ff00ff",
+            stages: 5,
+            cableStyle: "messy"
+        };
     }
 };

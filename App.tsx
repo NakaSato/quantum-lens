@@ -11,10 +11,13 @@ import EntanglementVisualizer from './components/EntanglementVisualizer';
 import QSphere from './components/QSphere';
 import HardwareBridge from './components/HardwareBridge';
 import QuantumSolver from './components/QuantumSolver';
+import CodeViewer from './components/CodeViewer';
+import QuantumRigVisualizer from './components/QuantumRigVisualizer';
 import GateSelector from './components/GateSelector';
 import SettingsModal from './components/SettingsModal';
 import ReportModal from './components/ReportModal';
 import { generatePDFReport } from './services/reportService';
+import { generateRigSpecification, RigSpecification } from './services/geminiService';
 import { Gate, GateType, Complex, QubitState } from './types';
 import { CIRCUIT_EXAMPLES } from './data/circuitExamples';
 
@@ -82,6 +85,10 @@ const App: React.FC = () => {
   const [isLocked, setIsLocked] = useState(false);
   const [isFullScreenBloch, setIsFullScreenBloch] = useState(false);
   const [isFullScreenViz, setIsFullScreenViz] = useState(false); 
+  
+  // --- Magic Feature State ---
+  const [rigSpec, setRigSpec] = useState<RigSpecification | null>(null);
+  const [isGeneratingRig, setIsGeneratingRig] = useState(false);
 
   // --- Zoom & Pan State ---
   const [zoom, setZoom] = useState(1);
@@ -113,8 +120,6 @@ const App: React.FC = () => {
                  newStep = [...newStep, ...Array(newQubits - newStep.length).fill(null)];
             } else {
                  newStep = newStep.slice(0, newQubits);
-                 // Clean up controls that might point to deleted qubits?
-                 // For now, simpler truncation.
             }
             return newStep;
         });
@@ -122,7 +127,6 @@ const App: React.FC = () => {
     };
 
     setHistory(prev => prev.map(resizeGrid));
-    // fitToCircuit will be called manually or naturally by user interaction
   };
 
   // Helper to update grid with history
@@ -144,6 +148,16 @@ const App: React.FC = () => {
     if (currentStep < history.length - 1) {
        setCurrentStep(currentStep + 1);
     }
+  };
+  
+  const handleHardwareControl = (action: 'next' | 'prev' | 'reset') => {
+      if (isLocked) return;
+      if (action === 'next') redo();
+      else if (action === 'prev') undo();
+      else if (action === 'reset') {
+          setCurrentStep(0);
+          resetView();
+      }
   };
 
   // --- View Control ---
@@ -190,6 +204,18 @@ const App: React.FC = () => {
         document.exitFullscreen();
       }
     }
+  };
+
+  const handleMagicGenerate = async () => {
+      setIsGeneratingRig(true);
+      
+      // Calculate depth
+      let depth = 0;
+      grid.forEach((step, i) => { if (step.some(g => g !== null)) depth = i + 1; });
+      
+      const spec = await generateRigSpecification(numQubits, depth);
+      setRigSpec(spec);
+      setIsGeneratingRig(false);
   };
 
   // --- Save / Load Logic ---
@@ -280,7 +306,7 @@ const App: React.FC = () => {
   }, [currentStep, history, projectTitle, isLocked]);
 
   const [amplitudes, setAmplitudes] = useState<Complex[]>([]);
-  const [activeTab, setActiveTab] = useState<'visuals' | 'tutor' | 'hardware' | 'solver'>('visuals');
+  const [activeTab, setActiveTab] = useState<'visuals' | 'code' | 'tutor' | 'hardware' | 'solver'>('visuals');
   const [vizMode, setVizMode] = useState<'statevector' | 'qsphere' | 'phasor' | 'measure' | 'tunneling' | 'entanglement'>('statevector');
   const [dragOverCell, setDragOverCell] = useState<{ step: number, wire: number } | null>(null);
 
@@ -654,6 +680,15 @@ const App: React.FC = () => {
           projectTitle={projectTitle}
       />
 
+      {rigSpec && (
+          <QuantumRigVisualizer 
+             spec={rigSpec} 
+             numQubits={numQubits}
+             gates={flattenedCircuit}
+             onClose={() => setRigSpec(null)} 
+          />
+      )}
+
       {/* 1. Header Toolbar */}
       <header className="flex items-center justify-between px-6 py-3 bg-slate-900 border-b border-slate-800 shrink-0 z-20 shadow-lg">
         {/* ... (Header content unchanged) ... */}
@@ -680,6 +715,23 @@ const App: React.FC = () => {
         
         <div className="flex gap-2 items-center">
              
+             {/* Magic Model Button */}
+             <button 
+                onClick={handleMagicGenerate}
+                disabled={isGeneratingRig}
+                className="group relative px-3 py-1.5 rounded bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-white text-xs font-bold uppercase tracking-wider flex items-center gap-2 shadow-lg hover:shadow-orange-500/30 transition-all active:scale-95 disabled:grayscale"
+                title="Generate 3D Quantum Rig"
+             >
+                {isGeneratingRig ? (
+                    <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                ) : (
+                    <svg className="w-4 h-4 text-yellow-200" fill="currentColor" viewBox="0 0 20 20"><path d="M10 1l2.5 6 6 2.5-6 2.5-2.5 6-2.5-6-6-2.5 6-2.5L10 1z" /></svg>
+                )}
+                <span className="hidden md:inline">Magic Model</span>
+             </button>
+
+             <div className="w-px bg-slate-800 mx-1 h-6"></div>
+
              {/* Undo / Redo Group */}
              <div className="flex bg-slate-800 rounded p-0.5 gap-0.5 mr-2 shadow-inner border border-slate-700/50">
                <button 
@@ -732,7 +784,7 @@ const App: React.FC = () => {
                  </>
              ) : (
                  <>
-                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" /></svg>
+                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" /></svg>
                    <span className="hidden md:inline">Edit Mode</span>
                  </>
              )}
@@ -953,13 +1005,13 @@ const App: React.FC = () => {
 
            <div className="w-full h-full overflow-hidden flex flex-col">
                <div className="flex border-b border-slate-800 bg-slate-900">
-                  {['visuals', 'tutor', 'hardware', 'solver'].map((tab) => (
+                  {['visuals', 'code', 'tutor', 'hardware', 'solver'].map((tab) => (
                     <button 
                         key={tab}
                         onClick={() => setActiveTab(tab as any)}
                         className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider hover:bg-slate-800 transition-colors ${activeTab === tab ? 'text-blue-400 border-b-2 border-blue-400 bg-slate-800/50' : 'text-slate-500'}`}
                     >
-                        {tab === 'visuals' ? 'Output' : tab === 'tutor' ? 'AI Tutor' : tab === 'solver' ? 'Solver' : 'Hardware'}
+                        {tab === 'visuals' ? 'Output' : tab === 'code' ? 'Code' : tab === 'tutor' ? 'AI Tutor' : tab === 'solver' ? 'Solver' : 'Hardware'}
                     </button>
                   ))}
                </div>
@@ -1010,6 +1062,10 @@ const App: React.FC = () => {
                            {vizMode === 'tunneling' && <QuantumTunnelingVisualizer />}
                         </div>
                      </div>
+                  ) : activeTab === 'code' ? (
+                     <div className="h-full flex flex-col">
+                        <CodeViewer gates={flattenedCircuit} numQubits={numQubits} />
+                     </div>
                   ) : activeTab === 'tutor' ? (
                      <div className="h-full flex flex-col">
                         <ChatInterface currentGates={flattenedCircuit} onApplyCircuit={handleLoadGates} numQubits={numQubits} />
@@ -1020,7 +1076,11 @@ const App: React.FC = () => {
                      </div>
                   ) : (
                     <div className="h-full flex flex-col">
-                        <HardwareBridge amplitudes={amplitudes} numQubits={numQubits} />
+                        <HardwareBridge 
+                            amplitudes={amplitudes} 
+                            numQubits={numQubits} 
+                            onCircuitControl={handleHardwareControl}
+                        />
                     </div>
                   )}
                </div>
