@@ -8,15 +8,15 @@ import MeasurementLab from './components/MeasurementLab';
 import PolarPlotVisualizer from './components/PolarPlotVisualizer';
 import QuantumTunnelingVisualizer from './components/QuantumTunnelingVisualizer';
 import EntanglementVisualizer from './components/EntanglementVisualizer';
+import QSphere from './components/QSphere';
 import HardwareBridge from './components/HardwareBridge';
 import QuantumSolver from './components/QuantumSolver';
 import GateSelector from './components/GateSelector';
+import SettingsModal from './components/SettingsModal';
+import ReportModal from './components/ReportModal';
+import { generatePDFReport } from './services/reportService';
 import { Gate, GateType, Complex, QubitState } from './types';
 import { CIRCUIT_EXAMPLES } from './data/circuitExamples';
-
-// --- Types & Constants ---
-const STEPS = 20; // Increased to 20 for complex algorithms
-const WIRES = 4; // Upgraded to 4 qubits for advanced state visualization
 
 // --- Complex Math Helpers ---
 const zero: Complex = { r: 0, i: 0 };
@@ -38,6 +38,7 @@ interface ProjectFile {
   history: (Gate | null)[][][];
   currentStep: number;
   timestamp: number;
+  config?: { qubits: number; steps: number };
 }
 
 const PALETTE: DraggableGate[] = [
@@ -57,9 +58,16 @@ const PALETTE: DraggableGate[] = [
 ];
 
 const App: React.FC = () => {
+  // --- Config State ---
+  const [numQubits, setNumQubits] = useState(4);
+  const [numSteps, setNumSteps] = useState(20);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+
   // --- History State Management ---
+  // Initial state depends on numQubits and numSteps
   const [history, setHistory] = useState<(Gate | null)[][][]>([
-    Array.from({ length: STEPS }, () => Array(WIRES).fill(null))
+    Array.from({ length: 20 }, () => Array(4).fill(null))
   ]);
   const [currentStep, setCurrentStep] = useState(0);
 
@@ -73,7 +81,7 @@ const App: React.FC = () => {
   // --- UI State ---
   const [isLocked, setIsLocked] = useState(false);
   const [isFullScreenBloch, setIsFullScreenBloch] = useState(false);
-  const [isFullScreenViz, setIsFullScreenViz] = useState(false); // New state for Viz Fullscreen
+  const [isFullScreenViz, setIsFullScreenViz] = useState(false); 
 
   // --- Zoom & Pan State ---
   const [zoom, setZoom] = useState(1);
@@ -81,6 +89,41 @@ const App: React.FC = () => {
   const [isPanning, setIsPanning] = useState(false);
   const lastMousePos = useRef({ x: 0, y: 0 });
   const boardRef = useRef<HTMLDivElement>(null);
+
+  // Handle Config Change (Resize Logic)
+  const handleConfigChange = (newQubits: number, newSteps: number) => {
+    // If we change dimensions, we attempt to preserve existing gates
+    // but truncate if shrinking.
+    setNumQubits(newQubits);
+    setNumSteps(newSteps);
+
+    const resizeGrid = (g: (Gate | null)[][]) => {
+        let newGrid = [...g];
+        // 1. Resize Steps
+        if (newSteps > newGrid.length) {
+            const extra = Array.from({ length: newSteps - newGrid.length }, () => Array(newQubits).fill(null));
+            newGrid = [...newGrid, ...extra];
+        } else {
+            newGrid = newGrid.slice(0, newSteps);
+        }
+        // 2. Resize Wires
+        newGrid = newGrid.map(step => {
+            let newStep = [...step];
+            if (newQubits > newStep.length) {
+                 newStep = [...newStep, ...Array(newQubits - newStep.length).fill(null)];
+            } else {
+                 newStep = newStep.slice(0, newQubits);
+                 // Clean up controls that might point to deleted qubits?
+                 // For now, simpler truncation.
+            }
+            return newStep;
+        });
+        return newGrid;
+    };
+
+    setHistory(prev => prev.map(resizeGrid));
+    // fitToCircuit will be called manually or naturally by user interaction
+  };
 
   // Helper to update grid with history
   const updateGrid = (newGrid: (Gate | null)[][]) => {
@@ -98,8 +141,9 @@ const App: React.FC = () => {
 
   const redo = () => {
     if (isLocked) return;
-    if (currentStep < history.length - 1) setCurrentStep(currentStep - 1); // Logic fix: redo goes forward, previous logic was setCurrentStep(currentStep+1) but check bounds
-    if (currentStep < history.length - 1) setCurrentStep(currentStep + 1);
+    if (currentStep < history.length - 1) {
+       setCurrentStep(currentStep + 1);
+    }
   };
 
   // --- View Control ---
@@ -117,30 +161,21 @@ const App: React.FC = () => {
         if (stepGates.some(g => g !== null)) maxStep = sIdx;
     });
 
-    // Ensure we show at least a few steps or up to the last gate + buffer
     const visibleSteps = Math.max(maxStep + 4, 6); 
     
     const isMobile = window.innerWidth < 768;
-    const STEP_W = isMobile ? 64 : 80; // w-16 or w-20
-    const WIRE_LABEL_W = 64; // pl-16
-    const PADDING_X = 96; // p-12 * 2 roughly
+    const STEP_W = isMobile ? 64 : 80;
+    const WIRE_LABEL_W = 64; 
+    const PADDING_X = 96;
     
-    // Estimated width of the "used" circuit part
     const usedWidth = visibleSteps * STEP_W + WIRE_LABEL_W + PADDING_X;
-    const totalWidth = STEPS * STEP_W + WIRE_LABEL_W + PADDING_X;
+    const totalWidth = numSteps * STEP_W + WIRE_LABEL_W + PADDING_X;
 
     const availableWidth = boardRef.current.clientWidth;
     
-    // Compute ideal zoom to fit width (clamped)
-    // We assume height usually fits or user scrolls vertically if needed, but primary focus is width
     let newZoom = availableWidth / usedWidth;
     newZoom = Math.min(Math.max(newZoom, 0.5), 1.3); 
     
-    // Compute Pan X
-    // The grid is centered by CSS (justify-center).
-    // Center of TOTAL grid is at 0 visual offset.
-    // We want the center of USED grid to be at 0 visual offset.
-    // Shift = (TotalWidth / 2) - (UsedWidth / 2)
     const newPanX = (totalWidth / 2) - (usedWidth / 2);
     
     setZoom(newZoom);
@@ -160,17 +195,17 @@ const App: React.FC = () => {
   // --- Save / Load Logic ---
   const saveProject = () => {
     const projectData: ProjectFile = {
-      version: "1.0",
+      version: "1.1",
       title: projectTitle,
       history: history,
       currentStep: currentStep,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      config: { qubits: numQubits, steps: numSteps }
     };
     const blob = new Blob([JSON.stringify(projectData, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    // Sanitize title for filename
     const filename = projectTitle.replace(/[^a-z0-9]/gi, '_').toLowerCase() || 'quantum_circuit';
     link.download = `${filename}.qjson`;
     document.body.appendChild(link);
@@ -190,14 +225,19 @@ const App: React.FC = () => {
         const content = event.target?.result as string;
         const data = JSON.parse(content) as ProjectFile;
         
-        // Basic validation
-        if (data.history && Array.isArray(data.history) && Array.isArray(data.history[0])) {
+        if (data.history && Array.isArray(data.history)) {
+          // Restore config if present, otherwise default to 4x20 or infer from history
+          const loadedQubits = data.config?.qubits || data.history[0][0].length;
+          const loadedSteps = data.config?.steps || data.history[0].length;
+          
+          setNumQubits(loadedQubits);
+          setNumSteps(loadedSteps);
           setHistory(data.history);
+          
           const newStep = typeof data.currentStep === 'number' ? Math.min(data.currentStep, data.history.length - 1) : data.history.length - 1;
           setCurrentStep(newStep);
           setProjectTitle(data.title || "Untitled Circuit");
           
-          // Trigger Fit after state update
           setTimeout(() => fitToCircuit(data.history[newStep]), 50);
         } else {
            alert("Invalid project file format.");
@@ -208,19 +248,15 @@ const App: React.FC = () => {
       }
     };
     reader.readAsText(file);
-    e.target.value = ''; // Reset input to allow reloading same file
+    e.target.value = ''; 
   };
 
-  // Keyboard Shortcuts for Undo/Redo/Save
+  // Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
         e.preventDefault();
-        if (e.shiftKey) {
-          redo();
-        } else {
-          undo();
-        }
+        if (e.shiftKey) redo(); else undo();
       }
       if ((e.metaKey || e.ctrlKey) && e.key === 'y') {
         e.preventDefault();
@@ -234,6 +270,10 @@ const App: React.FC = () => {
         e.preventDefault();
         fitToCircuit();
       }
+      if ((e.metaKey || e.ctrlKey) && e.key === ',') {
+        e.preventDefault();
+        setIsSettingsOpen(true);
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
@@ -241,11 +281,11 @@ const App: React.FC = () => {
 
   const [amplitudes, setAmplitudes] = useState<Complex[]>([]);
   const [activeTab, setActiveTab] = useState<'visuals' | 'tutor' | 'hardware' | 'solver'>('visuals');
-  const [vizMode, setVizMode] = useState<'statevector' | 'phasor' | 'measure' | 'tunneling' | 'entanglement'>('statevector');
+  const [vizMode, setVizMode] = useState<'statevector' | 'qsphere' | 'phasor' | 'measure' | 'tunneling' | 'entanglement'>('statevector');
   const [dragOverCell, setDragOverCell] = useState<{ step: number, wire: number } | null>(null);
 
   // Sidebar Resize State
-  const [sidebarWidth, setSidebarWidth] = useState(384); // Default 384px (w-96)
+  const [sidebarWidth, setSidebarWidth] = useState(384); 
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isResizing, setIsResizing] = useState(false);
 
@@ -268,13 +308,12 @@ const App: React.FC = () => {
 
   useEffect(() => {
     // Generic Simulation for N Qubits
-    const numStates = 1 << WIRES;
+    const numStates = 1 << numQubits;
     let state = new Array(numStates).fill(zero);
-    state[0] = one; // Initial State |00...0>
+    state[0] = one; // Initial State |0...0>
     
     const INV_SQRT_2 = 1 / Math.sqrt(2);
 
-    // Generic Single Qubit Gate Application
     const applyGate = (u00: Complex, u01: Complex, u10: Complex, u11: Complex, target: number) => {
        const newState = [...state];
        const halfStates = numStates / 2;
@@ -296,7 +335,6 @@ const App: React.FC = () => {
        state = newState;
     };
 
-    // Generic Controlled Gate Application
     const applyControlledGate = (type: GateType, ctrl: number, tgt: number) => {
         const newState = [...state];
         const halfStates = numStates / 2;
@@ -335,6 +373,9 @@ const App: React.FC = () => {
        const T = gate.target;
        const C = gate.control;
 
+       // Skip gates if target/control out of bounds (after resize)
+       if (T >= numQubits || (C !== undefined && C >= numQubits)) return;
+
        if (gate.type === 'H') applyGate({r: INV_SQRT_2, i:0}, {r: INV_SQRT_2, i:0}, {r: INV_SQRT_2, i:0}, {r: -INV_SQRT_2, i:0}, T);
        else if (gate.type === 'X') applyGate(zero, one, one, zero, T);
        else if (gate.type === 'Y') applyGate(zero, {r:0, i:-1}, {r:0, i:1}, zero, T);
@@ -349,7 +390,7 @@ const App: React.FC = () => {
     });
 
     setAmplitudes(state);
-  }, [flattenedCircuit]);
+  }, [flattenedCircuit, numQubits]);
 
   // --- Resize Handler ---
   useEffect(() => {
@@ -384,49 +425,31 @@ const App: React.FC = () => {
   // --- Zoom & Pan Handlers ---
   const handleWheel = (e: React.WheelEvent) => {
       if (e.ctrlKey || e.metaKey) {
-          e.preventDefault(); // Stop browser zoom
+          e.preventDefault(); 
           const zoomSensitivity = 0.0015;
           const delta = -e.deltaY * zoomSensitivity;
           const newZoom = Math.min(Math.max(zoom + delta, 0.4), 3.0);
           
           if (boardRef.current) {
-            // Zoom-to-cursor logic
             const rect = boardRef.current.getBoundingClientRect();
-            // Center of the board in screen coordinates
             const centerX = rect.left + rect.width / 2;
             const centerY = rect.top + rect.height / 2;
-            
-            // Mouse position relative to center
             const mouseX = e.clientX - centerX;
             const mouseY = e.clientY - centerY;
-            
-            // Pan adjustment:
-            // The point under mouse at (mouseX, mouseY) corresponds to logic coordinates: P = (mouse - pan) / oldZoom
-            // We want (mouse - newPan) / newZoom = P
-            // newPan = mouse - P * newZoom = mouse - (mouse - pan) * (newZoom / oldZoom)
             const scaleFactor = newZoom / zoom;
             const newPanX = mouseX - (mouseX - pan.x) * scaleFactor;
             const newPanY = mouseY - (mouseY - pan.y) * scaleFactor;
-            
             setPan({ x: newPanX, y: newPanY });
           }
-          
           setZoom(newZoom);
       } else {
-          // Pan with scroll wheel
-          setPan(p => ({
-              x: p.x - e.deltaX,
-              y: p.y - e.deltaY
-          }));
+          setPan(p => ({ x: p.x - e.deltaX, y: p.y - e.deltaY }));
       }
   };
 
   const startPan = (e: React.MouseEvent) => {
-      // Middle mouse (1) or Left Click (0) to pan
-      // We check if target is not a gate/interactive element
       const target = e.target as HTMLElement;
       const isInteractive = target.closest('.gate-cell') || target.closest('button');
-      
       if ((e.button === 1 || e.button === 0) && !isInteractive) { 
         setIsPanning(true);
         lastMousePos.current = { x: e.clientX, y: e.clientY };
@@ -437,7 +460,6 @@ const App: React.FC = () => {
       if (!isPanning) return;
       const dx = e.clientX - lastMousePos.current.x;
       const dy = e.clientY - lastMousePos.current.y;
-      
       setPan(p => ({ x: p.x + dx, y: p.y + dy }));
       lastMousePos.current = { x: e.clientX, y: e.clientY };
   };
@@ -478,8 +500,8 @@ const App: React.FC = () => {
             target: wire,
         };
         if (['CX', 'CZ', 'CY', 'CS'].includes(gateType)) {
-            let defaultControl = (wire + 1) % WIRES;
-            if (defaultControl === wire) defaultControl = (wire - 1 + WIRES) % WIRES;
+            let defaultControl = (wire + 1) % numQubits;
+            if (defaultControl === wire) defaultControl = (wire - 1 + numQubits) % numQubits;
             newGate.control = defaultControl;
             newGrid[step][defaultControl] = null; 
         }
@@ -504,8 +526,8 @@ const App: React.FC = () => {
     const newGrid = grid.map(row => [...row]);
     const newGate: Gate = { id: Math.random().toString(36).substr(2, 9), type: gateType, target: wireIdx };
     if (['CX', 'CZ', 'CY', 'CS'].includes(gateType)) {
-      let defaultControl = (wireIdx + 1) % WIRES;
-      if (defaultControl === wireIdx) defaultControl = (wireIdx - 1 + WIRES) % WIRES;
+      let defaultControl = (wireIdx + 1) % numQubits;
+      if (defaultControl === wireIdx) defaultControl = (wireIdx - 1 + numQubits) % numQubits;
       newGate.control = defaultControl;
       newGrid[stepIdx][defaultControl] = null;
     }
@@ -522,11 +544,11 @@ const App: React.FC = () => {
   const handleGateClick = (gate: DraggableGate) => {
     if (isLocked) return;
     const newGrid = grid.map(row => [...row]);
-    for (let step = 0; step < STEPS; step++) {
+    for (let step = 0; step < numSteps; step++) {
       const col = newGrid[step];
       if (['CX', 'CZ', 'CY', 'CS'].includes(gate.id)) {
-        for(let t=0; t<WIRES; t++) {
-             let c = (t + 1) % WIRES;
+        for(let t=0; t<numQubits; t++) {
+             let c = (t + 1) % numQubits;
              if (!col[t] && !col[c]) {
                  const newGate: Gate = { id: Math.random().toString(36).substr(2, 9), type: gate.id, target: c, control: t };
                  newGrid[step][c] = newGate;
@@ -535,7 +557,7 @@ const App: React.FC = () => {
              }
         }
       } else {
-        for(let w=0; w<WIRES; w++) {
+        for(let w=0; w<numQubits; w++) {
             if (!col[w]) {
                 newGrid[step][w] = { id: Math.random().toString(36).substr(2, 9), type: gate.id, target: w };
                 updateGrid(newGrid);
@@ -548,7 +570,7 @@ const App: React.FC = () => {
 
   const clearCircuit = () => {
     if (isLocked) return;
-    updateGrid(Array.from({ length: STEPS }, () => Array(WIRES).fill(null)));
+    updateGrid(Array.from({ length: numSteps }, () => Array(numQubits).fill(null)));
     resetView();
   };
 
@@ -557,9 +579,18 @@ const App: React.FC = () => {
     const idx = parseInt(e.target.value);
     if (isNaN(idx)) return;
     const example = CIRCUIT_EXAMPLES[idx];
-    const newGrid = Array.from({ length: STEPS }, () => Array(WIRES).fill(null));
+    
+    // Check if example fits in current qubits
+    const maxWire = Math.max(...example.gates.map(g => Math.max(g.w, g.c ?? 0)));
+    if (maxWire >= numQubits) {
+        alert(`This example requires ${maxWire + 1} qubits. Please adjust settings.`);
+        e.target.value = "";
+        return;
+    }
+
+    const newGrid = Array.from({ length: numSteps }, () => Array(numQubits).fill(null));
     example.gates.forEach(g => {
-        if (g.s < STEPS && g.w < WIRES) {
+        if (g.s < numSteps && g.w < numQubits) {
              const gate: Gate = { id: Math.random().toString(36).substr(2, 9), type: g.t, target: g.w, control: g.c };
              newGrid[g.s][g.w] = gate;
         }
@@ -572,17 +603,30 @@ const App: React.FC = () => {
   
   const handleLoadGates = (gates: Gate[]) => {
       if (isLocked) return;
-      const newGrid = Array.from({ length: STEPS }, () => Array(WIRES).fill(null));
+      const newGrid = Array.from({ length: numSteps }, () => Array(numQubits).fill(null));
       let currentCol = 0;
       gates.forEach(gate => {
-          if (currentCol >= STEPS) return;
+          if (currentCol >= numSteps) return;
+          if (gate.target >= numQubits || (gate.control !== undefined && gate.control >= numQubits)) return;
+
           const isTargetOccupied = newGrid[currentCol][gate.target] !== null;
           const isControlOccupied = gate.control !== undefined ? newGrid[currentCol][gate.control!] !== null : false;
           if (isTargetOccupied || isControlOccupied) currentCol++;
-          if (currentCol < STEPS) newGrid[currentCol][gate.target] = gate;
+          if (currentCol < numSteps) newGrid[currentCol][gate.target] = gate;
       });
       updateGrid(newGrid);
       setTimeout(() => fitToCircuit(newGrid), 50); // Auto-fit
+  };
+
+  const handleGenerateReport = (studentName: string, password?: string) => {
+      generatePDFReport({
+          studentName,
+          projectTitle,
+          password,
+          amplitudes,
+          gates: grid,
+          numQubits
+      });
   };
 
   const getGateSymbol = (type: GateType) => {
@@ -596,6 +640,20 @@ const App: React.FC = () => {
   return (
     <div className="flex flex-col h-screen bg-slate-950 text-slate-200 font-sans overflow-hidden selection:bg-cyan-500/30">
       
+      <SettingsModal 
+          isOpen={isSettingsOpen} 
+          onClose={() => setIsSettingsOpen(false)} 
+          config={{ qubitCount: numQubits, stepCount: numSteps }}
+          onConfigChange={handleConfigChange}
+      />
+
+      <ReportModal
+          isOpen={isReportModalOpen}
+          onClose={() => setIsReportModalOpen(false)}
+          onGenerate={handleGenerateReport}
+          projectTitle={projectTitle}
+      />
+
       {/* 1. Header Toolbar */}
       <header className="flex items-center justify-between px-6 py-3 bg-slate-900 border-b border-slate-800 shrink-0 z-20 shadow-lg">
         {/* ... (Header content unchanged) ... */}
@@ -621,6 +679,28 @@ const App: React.FC = () => {
         </div>
         
         <div className="flex gap-2 items-center">
+             
+             {/* Undo / Redo Group */}
+             <div className="flex bg-slate-800 rounded p-0.5 gap-0.5 mr-2 shadow-inner border border-slate-700/50">
+               <button 
+                  onClick={undo} 
+                  disabled={currentStep === 0 || isLocked} 
+                  className={`p-1.5 px-3 rounded transition-colors flex items-center gap-2 text-xs font-semibold uppercase tracking-wider ${currentStep === 0 || isLocked ? 'text-slate-600 cursor-not-allowed' : 'text-slate-300 hover:bg-slate-700 hover:text-white'}`}
+                  title="Undo (Ctrl+Z)"
+               >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" /></svg>
+               </button>
+               <div className="w-px bg-slate-600 my-1 opacity-30"></div>
+               <button 
+                  onClick={redo} 
+                  disabled={currentStep === history.length - 1 || isLocked} 
+                  className={`p-1.5 px-3 rounded transition-colors flex items-center gap-2 text-xs font-semibold uppercase tracking-wider ${currentStep === history.length - 1 || isLocked ? 'text-slate-600 cursor-not-allowed' : 'text-slate-300 hover:bg-slate-700 hover:text-white'}`}
+                  title="Redo (Ctrl+Y)"
+               >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 10h-10a8 8 0 00-8 8v2M21 10l-6 6m6-6l-6-6" /></svg>
+               </button>
+             </div>
+
              <div className="flex bg-slate-800 rounded p-0.5 gap-0.5 mr-2 shadow-inner border border-slate-700/50">
              <button onClick={saveProject} title="Save Project (Ctrl+S)" className="p-1.5 px-3 rounded hover:bg-slate-700 transition-colors text-slate-300 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider">
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" /></svg>
@@ -656,6 +736,26 @@ const App: React.FC = () => {
                    <span className="hidden md:inline">Edit Mode</span>
                  </>
              )}
+          </button>
+          
+          <div className="w-px bg-slate-800 mx-1 h-6"></div>
+          
+          {/* Report Button */}
+          <button 
+             onClick={() => setIsReportModalOpen(true)}
+             className="p-1.5 px-2 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+             title="Generate PDF Report"
+          >
+             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+          </button>
+
+          {/* Settings Button */}
+          <button 
+             onClick={() => setIsSettingsOpen(true)}
+             className="p-1.5 px-2 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+             title="Settings"
+          >
+             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
           </button>
           
           <div className="w-px bg-slate-800 mx-1 h-6"></div>
@@ -735,7 +835,7 @@ const App: React.FC = () => {
                  {/* Wire Lines (Layer 0) */}
                  <div className="absolute left-0 right-0 top-0 bottom-0 pointer-events-none z-0 pl-16 pr-8 pt-12">
                     <div className="flex flex-col gap-12">
-                       {Array.from({length: WIRES}, (_, q) => (
+                       {Array.from({length: numQubits}, (_, q) => (
                          <div key={q} className="relative w-full h-12 flex items-center">
                            {/* Main Wire */}
                            <div className="w-full h-0.5 bg-slate-700/50 shadow-sm"></div>
@@ -876,7 +976,7 @@ const App: React.FC = () => {
                              </button>
                            </div>
                            <div className="grid grid-cols-2 gap-2 cursor-pointer relative" onClick={() => setIsFullScreenBloch(true)}>
-                              {Array.from({length: WIRES}, (_, q) => (
+                              {Array.from({length: numQubits}, (_, q) => (
                                 <div key={q} className="bg-slate-950/50 border border-slate-800 rounded-lg p-2 flex flex-col items-center shadow-sm hover:border-cyan-500/30 transition-colors">
                                    <BlochSphere state={getReducedState(q)} size={120} />
                                    <span className="text-xs text-slate-400 font-mono mt-2 font-bold">q{q}</span>
@@ -886,9 +986,9 @@ const App: React.FC = () => {
                         </div>
 
                         <div className="flex flex-wrap gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800">
-                           {['statevector', 'phasor', 'measure', 'entanglement', 'tunneling'].map(m => (
+                           {['statevector', 'qsphere', 'phasor', 'measure', 'entanglement', 'tunneling'].map(m => (
                               <button key={m} onClick={() => setVizMode(m as any)} className={`flex-1 py-1 px-2 text-[10px] uppercase font-bold rounded transition-colors whitespace-nowrap ${vizMode === m ? 'bg-slate-800 text-cyan-400 shadow ring-1 ring-slate-700' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-900'}`}>
-                                 {m === 'entanglement' ? 'Entangle' : m}
+                                 {m === 'entanglement' ? 'Entangle' : m === 'qsphere' ? 'Q-Sphere' : m}
                               </button>
                            ))}
                         </div>
@@ -903,6 +1003,7 @@ const App: React.FC = () => {
                            </button>
 
                            {vizMode === 'statevector' && <StatevectorVisualizer amplitudes={amplitudes} />}
+                           {vizMode === 'qsphere' && <QSphere amplitudes={amplitudes} />}
                            {vizMode === 'phasor' && <PolarPlotVisualizer amplitudes={amplitudes} />}
                            {vizMode === 'measure' && <MeasurementLab amplitudes={amplitudes} />}
                            {vizMode === 'entanglement' && <EntanglementVisualizer amplitudes={amplitudes} />}
@@ -911,7 +1012,7 @@ const App: React.FC = () => {
                      </div>
                   ) : activeTab === 'tutor' ? (
                      <div className="h-full flex flex-col">
-                        <ChatInterface currentGates={flattenedCircuit} onApplyCircuit={handleLoadGates} />
+                        <ChatInterface currentGates={flattenedCircuit} onApplyCircuit={handleLoadGates} numQubits={numQubits} />
                      </div>
                   ) : activeTab === 'solver' ? (
                      <div className="h-full flex flex-col">
@@ -919,7 +1020,7 @@ const App: React.FC = () => {
                      </div>
                   ) : (
                     <div className="h-full flex flex-col">
-                        <HardwareBridge amplitudes={amplitudes} numQubits={WIRES} />
+                        <HardwareBridge amplitudes={amplitudes} numQubits={numQubits} />
                     </div>
                   )}
                </div>
@@ -940,7 +1041,7 @@ const App: React.FC = () => {
                    <button onClick={() => setIsFullScreenBloch(false)} className="p-3 bg-slate-900 rounded-full hover:bg-slate-800 border border-slate-700 text-slate-300 transition-all">Close</button>
                 </div>
                 <div className="flex-1 overflow-auto p-8 lg:p-12 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 lg:gap-12 items-center justify-items-center">
-                   {Array.from({length: WIRES}, (_, q) => (
+                   {Array.from({length: numQubits}, (_, q) => (
                       <div key={q} className="flex flex-col items-center gap-6 animate-in zoom-in-50 duration-500" style={{ animationDelay: `${q * 100}ms` }}>
                           <div className="text-2xl font-bold text-slate-300 font-mono">Qubit {q}</div>
                           <div className="bg-slate-900/30 rounded-full p-4 border border-slate-800/50 shadow-2xl">
@@ -956,7 +1057,7 @@ const App: React.FC = () => {
         {isFullScreenViz && (
             <div className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-xl flex flex-col animate-in fade-in duration-200">
                 <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
-                     <h2 className="text-xl font-bold text-cyan-400 uppercase tracking-widest">{vizMode === 'entanglement' ? 'Entanglement Graph' : vizMode}</h2>
+                     <h2 className="text-xl font-bold text-cyan-400 uppercase tracking-widest">{vizMode === 'entanglement' ? 'Entanglement Graph' : vizMode === 'qsphere' ? 'Q-Sphere Superposition' : vizMode}</h2>
                      <button onClick={() => setIsFullScreenViz(false)} className="p-2 bg-slate-800 rounded-full hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 transition-colors">
                         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                      </button>
@@ -964,6 +1065,7 @@ const App: React.FC = () => {
                 <div className="flex-1 p-8 overflow-hidden flex items-center justify-center">
                      <div className="w-full h-full max-w-5xl bg-slate-900/50 rounded-xl border border-slate-800 p-6 shadow-2xl relative">
                           {vizMode === 'statevector' && <StatevectorVisualizer amplitudes={amplitudes} />}
+                          {vizMode === 'qsphere' && <QSphere amplitudes={amplitudes} />}
                           {vizMode === 'phasor' && <PolarPlotVisualizer amplitudes={amplitudes} />}
                           {vizMode === 'measure' && <MeasurementLab amplitudes={amplitudes} />}
                           {vizMode === 'entanglement' && <EntanglementVisualizer amplitudes={amplitudes} />}

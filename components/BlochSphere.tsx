@@ -1,3 +1,4 @@
+
 import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -92,7 +93,7 @@ const BlochSphere: React.FC<BlochSphereProps> = ({ state, size = 300, onStateCha
     const origin = new THREE.Vector3(0, 0, 0);
     const length = 1.1; // Slightly longer than sphere radius
     const hex = 0xf43f5e; // Rose color
-    const arrowHelper = new THREE.ArrowHelper(dir, origin, length, hex, 0.2, 0.1);
+    const arrowHelper = new THREE.ArrowHelper(dir, origin, length, hex, 0.25, 0.15); // Slightly thicker head
     scene.add(arrowHelper);
     vectorRef.current = arrowHelper;
 
@@ -108,6 +109,7 @@ const BlochSphere: React.FC<BlochSphereProps> = ({ state, size = 300, onStateCha
     scene.add(southPole);
 
     // 7. Interaction Sphere (Invisible hit target for raycasting)
+    // Slightly larger than visual sphere to capture clicks easily
     const interactionGeo = new THREE.SphereGeometry(1.05, 32, 32); 
     const interactionMat = new THREE.MeshBasicMaterial({ visible: false, side: THREE.DoubleSide });
     const interactionMesh = new THREE.Mesh(interactionGeo, interactionMat);
@@ -165,20 +167,33 @@ const BlochSphere: React.FC<BlochSphereProps> = ({ state, size = 300, onStateCha
     };
 
     const onPointerDown = (e: PointerEvent) => {
-      // Allow orbit controls with right click or secondary touch, only drag on left click
+      // Allow orbit controls with right click or secondary touch, only drag on left click (button 0)
       if (e.button !== 0) return;
 
       const hit = updateStateFromIntersection(e);
       if (hit) {
         isDragging = true;
         controls.enabled = false;
-        document.body.style.cursor = 'grabbing';
+        renderer.domElement.style.cursor = 'grabbing';
       }
     };
 
     const onPointerMove = (e: PointerEvent) => {
       if (isDragging) {
         updateStateFromIntersection(e);
+      } else {
+        // Hover effect to indicate interactivity
+        const rect = renderer.domElement.getBoundingClientRect();
+        mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+        raycaster.setFromCamera(mouse, camera);
+        const intersects = raycaster.intersectObject(interactionMesh);
+        
+        if (intersects.length > 0) {
+            renderer.domElement.style.cursor = 'grab';
+        } else {
+            renderer.domElement.style.cursor = 'default';
+        }
       }
     };
 
@@ -186,11 +201,12 @@ const BlochSphere: React.FC<BlochSphereProps> = ({ state, size = 300, onStateCha
       if (isDragging) {
         isDragging = false;
         controls.enabled = true;
-        document.body.style.cursor = 'default';
+        renderer.domElement.style.cursor = 'grab';
       }
     };
 
     renderer.domElement.addEventListener('pointerdown', onPointerDown);
+    // Listen on window for move/up to catch drags leaving the canvas
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
 
@@ -224,9 +240,13 @@ const BlochSphere: React.FC<BlochSphereProps> = ({ state, size = 300, onStateCha
     // Bloch Sphere Convention: Z-axis is Up (|0>), X is Forward/Right.
     // Three.js Convention: Y is Up.
     
-    const x = Math.sin(localState.theta) * Math.cos(localState.phi);
-    const z = Math.sin(localState.theta) * Math.sin(localState.phi);
+    // theta is angle from Up (Y)
     const y = Math.cos(localState.theta);
+    // Projection on XZ plane is sin(theta)
+    const sinTheta = Math.sin(localState.theta);
+    
+    const x = sinTheta * Math.cos(localState.phi);
+    const z = sinTheta * Math.sin(localState.phi);
 
     const direction = new THREE.Vector3(x, y, z).normalize();
     vectorRef.current.setDirection(direction);
@@ -241,7 +261,6 @@ const BlochSphere: React.FC<BlochSphereProps> = ({ state, size = 300, onStateCha
           <div 
             ref={mountRef} 
             className="w-full h-full rounded-full border border-slate-800 bg-slate-900/50 shadow-inner group-hover:border-cyan-500/30 transition-colors" 
-            style={{ cursor: 'grab' }}
             title="Drag vector to set state, or drag background to rotate view" 
           />
           

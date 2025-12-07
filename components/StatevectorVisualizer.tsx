@@ -23,6 +23,12 @@ const StatevectorVisualizer: React.FC<StatevectorVisualizerProps> = ({ amplitude
     return `${rs} ${sign} ${is}i`;
   };
 
+  const getPhaseHue = (phase: number) => {
+    let hue = (phase * 180) / Math.PI;
+    if (hue < 0) hue += 360;
+    return hue;
+  };
+
   // Prepare data items
   const items = amplitudes.map((amp, idx) => {
       const prob = calculateProb(amp);
@@ -34,9 +40,7 @@ const StatevectorVisualizer: React.FC<StatevectorVisualizerProps> = ({ amplitude
     ? items 
     : items.filter(item => item.prob > 0.0001);
 
-  // Fallback: If simulation is zeroed out or glitch, show all, 
-  // or if strictly |0> and only one item, that's fine.
-  // Ideally if displayedItems is empty (e.g. all 0), show items.
+  // If filtered list is empty (e.g. theoretical zero state due to error, though unlikely in sim), show all
   const listToRender = displayedItems.length > 0 ? displayedItems : items;
 
   const nonZeroAmps = items.filter(a => a.prob > 0.0001);
@@ -56,19 +60,12 @@ const StatevectorVisualizer: React.FC<StatevectorVisualizerProps> = ({ amplitude
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto custom-scrollbar space-y-1.5 pr-1">
+      <div className="flex-1 overflow-y-auto custom-scrollbar space-y-1 pr-1">
         {listToRender.map(({ amp, idx, prob, phase }) => {
           const isSignificant = prob > 0.001;
           const percentage = (prob * 100).toFixed(1);
           
-          // Phase coloring
-          // Map phase (-PI to PI) to Hue (0-360)
-          // 0 (Real+) -> 0 (Red)
-          // PI/2 (Imag+) -> 90 (Green)
-          // PI (Real-) -> 180 (Cyan)
-          // -PI/2 (Imag-) -> 270 (Purple)
-          let hue = (phase * 180) / Math.PI;
-          if (hue < 0) hue += 360;
+          const hue = getPhaseHue(phase);
           const phaseColor = `hsl(${hue}, 80%, 60%)`;
 
           return (
@@ -127,7 +124,7 @@ const StatevectorVisualizer: React.FC<StatevectorVisualizerProps> = ({ amplitude
            |ψ⟩ = {nonZeroAmps.length === 0 ? "0" : nonZeroAmps.map((a, i) => (
              <span key={i}>
                {i > 0 && " + "}
-               <span style={{ color: `hsl(${((a.phase * 180 / Math.PI) < 0 ? (a.phase * 180 / Math.PI) + 360 : (a.phase * 180 / Math.PI))}, 70%, 70%)` }}>
+               <span style={{ color: `hsl(${getPhaseHue(a.phase)}, 70%, 70%)` }}>
                  ({a.amp.r.toFixed(2)}{a.amp.i >= 0 ? '+' : ''}{a.amp.i.toFixed(2)}i)
                </span>
                <span className="text-slate-200 ml-0.5">{labels[a.idx]}</span>
