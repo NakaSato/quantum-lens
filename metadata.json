@@ -1,0 +1,7 @@
+{
+  "name": "QuantumLens",
+  "description": "An interactive visual quantum programming environment featuring a circuit composer, real-time Bloch sphere visualization, and a Gemini-powered quantum tutor.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
