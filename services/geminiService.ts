@@ -14,6 +14,43 @@ const HARDWARE_CONTEXT = `
     - Default C++ code provided in the app uses the 'ArduinoJson' library.
 `;
 
+const ADVANCED_THEORY_CONTEXT = `
+    Advanced Quantum Architectures (QPGA):
+    - Photonic QPGA (Quantum Programmable Gate Array): An architecture using path-encoded photonic qubits.
+    - Structure: A lattice of phase-modulated Mach-Zehnder Interferometers (MZIs) performs rotations.
+    - Components: Waveguides, Phase Shifters (Heaters), Directional Couplers.
+    - Entanglement: Embedded quantum emitters use a two-photon scattering process for deterministic Controlled-Z operations.
+    
+    Mathematical Foundations:
+    - Bloch Sphere: A geometric representation where pure states lie on the surface (|a|=1) and mixed states in the interior (|a|<1).
+    - Density Operators: ρ = Σ p_i |ψ_i><ψ_i|. Describes statistical mixtures. Pure state: ρ^2 = ρ.
+    
+    Quantum Dynamics (Unitary Evolution):
+    - Schrödinger Equation: iħ d/dt |ψ(t)⟩ = H(t) |ψ(t)⟩.
+    - Time Evolution: |ψ(t)⟩ = U(t) |ψ(0)⟩ where U = e^(-iHt/ħ).
+    - Properties: Unitary matrices (U†U = I) ensure Reversibility and Norm Preservation.
+    
+    Entanglement & Non-Locality:
+    - Bell States: Maximally entangled 2-qubit states (e.g., |Φ+> = (|00>+|11>)/√2). Perfect correlation.
+    - CHSH Inequality: S = |E(a,b) - E(a,b')| + |E(a',b) + E(a',b')| ≤ 2 for local realism.
+    - Quantum Violation: QM allows S up to 2√2 ≈ 2.82, proving incompatibility with local hidden variable theories.
+    - Quantifying: Entropy of Entanglement E(Ψ) = S(ρ_A) = -Tr(ρ_A ln ρ_A). Calculated via Schmidt Decomposition.
+
+    Physical Implementations (Hardware):
+    - DiVincenzo Criteria: Scalability, Initialization, Coherence, Universal Gates, Measurement.
+    - Superconducting Qubits (Transmons):
+        - Artificial atoms made of superconducting circuits (Al/Nb) at mK temps.
+        - Josephson Junction (JJ): Nonlinear inductor ($U(\phi) = -E_J \cos \phi$) providing anharmonicity.
+        - Hamiltonian: $H = 4E_C(\hat{n} - n_g)^2 - E_J \cos \hat{\phi}$.
+        - Readout: Dispersive readout via resonators.
+    - Semiconductor Quantum Dots (Spin Qubits):
+        - Traps single electrons in Si/GaAs potential wells.
+        - Operation: Coulomb Blockade regime (single electron tunneling).
+        - Hamiltonian: Heisenberg Exchange $H_{exch} = J(t) \\vec{S}_1 \\cdot \\vec{S}_2$. Pulsing barrier J(t) enables SWAP.
+        - Readout: Spin-to-Charge conversion (Elzerman Readout) detected by SET/QPC.
+        - Pros: Extreme miniaturization (<100nm), Industrial CMOS compatibility.
+`;
+
 /**
  * Stream a chat response with full context of the circuit and conversation history.
  */
@@ -37,6 +74,8 @@ export const streamChat = async (
     
     ${HARDWARE_CONTEXT}
     
+    ${ADVANCED_THEORY_CONTEXT}
+    
     Current Circuit Context (The user is currently editing this):
     - ${numQubits}-Qubit System (${Array.from({length: numQubits}, (_, i) => `q${i}`).join(', ')})
     - Initial State: |${'0'.repeat(numQubits)}>
@@ -46,7 +85,7 @@ export const streamChat = async (
     1. Respond strictly in ${language}.
     2. Be concise, friendly, and accurate.
     3. Use analogies suitable for a computer science student learning quantum physics.
-    4. If Entanglement is present, explain it clearly.
+    4. If Entanglement is present, explain it clearly using Bell States or CHSH if relevant.
     5. If the user asks about code, provide the equivalent Python code using the 'cirq' library.
     6. Format output with Markdown. Use simple bullet points.
   `;
@@ -325,6 +364,8 @@ export const solveQuantumProblem = async (problem: string): Promise<QuantumAlgor
 export interface RigSpecification {
     name: string;
     description: string;
+    rigType: 'fridge' | 'photonic';
+    processorType?: 'transmon' | 'spin'; // New optional field
     theme: 'gold' | 'cyber' | 'lab';
     coreColor: string;
     stages: number;
@@ -336,15 +377,26 @@ export const generateRigSpecification = async (numQubits: number, depth: number)
     
     const prompt = `
         Analyze a quantum circuit with ${numQubits} qubits and depth ${depth}.
-        Invent a fictional, high-tech quantum computer model that would be required to run this specific circuit.
+        Invent a fictional, high-tech quantum computer model required to run this.
         
-        Return a JSON object with:
-        - name: A cool sci-fi name (e.g., "Chronos-4 Dilution", "Sycamore Prime").
-        - description: A 2-sentence marketing description of its capability.
-        - theme: Visual style, strictly one of: 'gold' (Steampunk/IBM style), 'cyber' (Neon/Dark), 'lab' (Clean/White).
-        - coreColor: Hex code for the glowing core (e.g., #00ff00).
-        - stages: Number of cooling stages (integer 3-8).
-        - cableStyle: 'messy' (lots of coax), 'clean' (hidden wiring), or 'fiber' (glowing optical).
+        Rig Type Logic:
+        - If photonics/QPGA/linear optics: 'photonic'.
+        - Otherwise 'fridge' (superconducting/dilution).
+        
+        Processor Type Logic (If 'fridge'):
+        - If the vibe suggests 'silicon', 'semiconductor', 'nanowire', 'CMOS', or 'spin qubits': set processorType to 'spin'.
+        - Otherwise (default superconducting): set processorType to 'transmon'.
+        - Randomize between them if ambiguous to show variety.
+        
+        Return JSON:
+        - name: Sci-fi name (e.g., "Chronos-4", "Lattice-X Photon", "Silicon-Alpha").
+        - description: 2 marketing sentences.
+        - rigType: 'fridge' or 'photonic'.
+        - processorType: 'transmon' or 'spin' (Optional, only for fridge).
+        - theme: 'gold' (Steampunk/IBM), 'cyber' (Neon/Dark), 'lab' (Clean).
+        - coreColor: Hex (e.g., #00ff00).
+        - stages: Number of cooling stages/layers (3-8).
+        - cableStyle: 'messy', 'clean', or 'fiber'.
     `;
 
     try {
@@ -358,12 +410,14 @@ export const generateRigSpecification = async (numQubits: number, depth: number)
                     properties: {
                         name: { type: Type.STRING },
                         description: { type: Type.STRING },
+                        rigType: { type: Type.STRING, enum: ['fridge', 'photonic'] },
+                        processorType: { type: Type.STRING, enum: ['transmon', 'spin'], nullable: true },
                         theme: { type: Type.STRING, enum: ['gold', 'cyber', 'lab'] },
                         coreColor: { type: Type.STRING },
                         stages: { type: Type.INTEGER },
                         cableStyle: { type: Type.STRING, enum: ['messy', 'clean', 'fiber'] }
                     },
-                    required: ['name', 'description', 'theme', 'coreColor', 'stages', 'cableStyle']
+                    required: ['name', 'description', 'rigType', 'theme', 'coreColor', 'stages', 'cableStyle']
                 }
             }
         });
@@ -372,6 +426,8 @@ export const generateRigSpecification = async (numQubits: number, depth: number)
         return {
             name: "Generic QPU",
             description: "Standard quantum processing unit.",
+            rigType: "fridge",
+            processorType: "transmon",
             theme: "gold",
             coreColor: "#ff00ff",
             stages: 5,

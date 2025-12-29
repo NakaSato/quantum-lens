@@ -8,6 +8,7 @@ import MeasurementLab from './components/MeasurementLab';
 import PolarPlotVisualizer from './components/PolarPlotVisualizer';
 import QuantumTunnelingVisualizer from './components/QuantumTunnelingVisualizer';
 import EntanglementVisualizer from './components/EntanglementVisualizer';
+import UnitaryMatrixVisualizer from './components/UnitaryMatrixVisualizer';
 import QSphere from './components/QSphere';
 import HardwareBridge from './components/HardwareBridge';
 import QuantumSolver from './components/QuantumSolver';
@@ -196,6 +197,17 @@ const App: React.FC = () => {
     setPan({ x: newPanX, y: 0 });
   };
   
+  // Auto-resize listener
+  useEffect(() => {
+      const handleResize = () => {
+          // Debounce fit to circuit
+          const timeoutId = setTimeout(() => fitToCircuit(), 100);
+          return () => clearTimeout(timeoutId);
+      };
+      window.addEventListener('resize', handleResize);
+      return () => window.removeEventListener('resize', handleResize);
+  }, [grid]);
+  
   const toggleBrowserFullScreen = () => {
     if (!document.fullscreenElement) {
       document.documentElement.requestFullscreen();
@@ -307,12 +319,13 @@ const App: React.FC = () => {
 
   const [amplitudes, setAmplitudes] = useState<Complex[]>([]);
   const [activeTab, setActiveTab] = useState<'visuals' | 'code' | 'tutor' | 'hardware' | 'solver'>('visuals');
-  const [vizMode, setVizMode] = useState<'statevector' | 'qsphere' | 'phasor' | 'measure' | 'tunneling' | 'entanglement'>('statevector');
+  const [vizMode, setVizMode] = useState<'statevector' | 'qsphere' | 'phasor' | 'measure' | 'tunneling' | 'entanglement' | 'matrix'>('statevector');
   const [dragOverCell, setDragOverCell] = useState<{ step: number, wire: number } | null>(null);
 
   // Sidebar Resize State
   const [sidebarWidth, setSidebarWidth] = useState(384); 
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  // Determine initial sidebar state based on screen width
+  const [isSidebarOpen, setIsSidebarOpen] = useState(() => window.innerWidth >= 768);
   const [isResizing, setIsResizing] = useState(false);
 
   // Gates Palette State
@@ -692,7 +705,7 @@ const App: React.FC = () => {
       {/* 1. Header Toolbar */}
       <header className="flex items-center justify-between px-6 py-3 bg-slate-900 border-b border-slate-800 shrink-0 z-20 shadow-lg">
         {/* ... (Header content unchanged) ... */}
-        <div className="flex items-center gap-3 group cursor-pointer">
+        <div className="flex items-center gap-3 group cursor-pointer mr-4">
            <div className="relative w-9 h-9 flex items-center justify-center bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 rounded-lg shadow-[0_0_15px_rgba(168,85,247,0.4)] transition-all duration-300">
                <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                    <circle cx="12" cy="12" r="3" strokeWidth="2" />
@@ -700,7 +713,7 @@ const App: React.FC = () => {
                    <ellipse cx="12" cy="12" rx="8" ry="3" strokeWidth="1.5" transform="rotate(-45 12 12)" />
                </svg>
            </div>
-           <div className="flex flex-col">
+           <div className="flex flex-col hidden sm:flex">
               <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest leading-none mb-0.5">QuantumLens</span>
               <input 
                 type="text" 
@@ -713,13 +726,13 @@ const App: React.FC = () => {
            </div>
         </div>
         
-        <div className="flex gap-2 items-center">
+        <div className="flex gap-2 items-center overflow-x-auto no-scrollbar max-w-[calc(100vw-80px)] md:max-w-none px-2 mask-linear-fade">
              
              {/* Magic Model Button */}
              <button 
                 onClick={handleMagicGenerate}
                 disabled={isGeneratingRig}
-                className="group relative px-3 py-1.5 rounded bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-white text-xs font-bold uppercase tracking-wider flex items-center gap-2 shadow-lg hover:shadow-orange-500/30 transition-all active:scale-95 disabled:grayscale"
+                className="group relative px-3 py-1.5 rounded bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-white text-xs font-bold uppercase tracking-wider flex items-center gap-2 shadow-lg hover:shadow-orange-500/30 transition-all active:scale-95 disabled:grayscale shrink-0"
                 title="Generate 3D Quantum Rig"
              >
                 {isGeneratingRig ? (
@@ -730,10 +743,10 @@ const App: React.FC = () => {
                 <span className="hidden md:inline">Magic Model</span>
              </button>
 
-             <div className="w-px bg-slate-800 mx-1 h-6"></div>
+             <div className="w-px bg-slate-800 mx-1 h-6 shrink-0"></div>
 
              {/* Undo / Redo Group */}
-             <div className="flex bg-slate-800 rounded p-0.5 gap-0.5 mr-2 shadow-inner border border-slate-700/50">
+             <div className="flex bg-slate-800 rounded p-0.5 gap-0.5 mr-2 shadow-inner border border-slate-700/50 shrink-0">
                <button 
                   onClick={undo} 
                   disabled={currentStep === 0 || isLocked} 
@@ -753,7 +766,7 @@ const App: React.FC = () => {
                </button>
              </div>
 
-             <div className="flex bg-slate-800 rounded p-0.5 gap-0.5 mr-2 shadow-inner border border-slate-700/50">
+             <div className="flex bg-slate-800 rounded p-0.5 gap-0.5 mr-2 shadow-inner border border-slate-700/50 shrink-0">
              <button onClick={saveProject} title="Save Project (Ctrl+S)" className="p-1.5 px-3 rounded hover:bg-slate-700 transition-colors text-slate-300 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider">
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" /></svg>
                 <span className="hidden md:inline">Save</span>
@@ -766,7 +779,7 @@ const App: React.FC = () => {
              <input type="file" ref={projectFileInputRef} onChange={loadProject} accept=".qjson,.json" className="hidden" disabled={isLocked} />
           </div>
 
-          <div className="relative">
+          <div className="relative shrink-0">
              <select onChange={loadExample} disabled={isLocked} className={`bg-slate-800 text-slate-300 text-xs font-semibold uppercase tracking-wider py-1.5 pl-3 pr-8 rounded appearance-none border border-transparent outline-none transition-colors shadow-sm ${isLocked ? 'opacity-50 cursor-not-allowed' : 'hover:bg-slate-700 hover:border-slate-500 cursor-pointer focus:ring-1 focus:ring-cyan-500'}`} defaultValue="">
                <option value="" disabled>Load Example</option>
                {CIRCUIT_EXAMPLES.map((ex, idx) => (
@@ -775,8 +788,8 @@ const App: React.FC = () => {
              </select>
           </div>
           
-           <div className="w-px bg-slate-800 mx-1 h-6"></div>
-           <button onClick={() => setIsLocked(!isLocked)} className={`p-1.5 px-3 rounded transition-all duration-300 text-xs font-semibold uppercase tracking-wider flex items-center gap-2 border ${isLocked ? 'bg-amber-950/40 text-amber-400 border-amber-500/30' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-transparent'}`}>
+           <div className="w-px bg-slate-800 mx-1 h-6 shrink-0"></div>
+           <button onClick={() => setIsLocked(!isLocked)} className={`p-1.5 px-3 rounded transition-all duration-300 text-xs font-semibold uppercase tracking-wider flex items-center gap-2 border shrink-0 ${isLocked ? 'bg-amber-950/40 text-amber-400 border-amber-500/30' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-transparent'}`}>
              {isLocked ? (
                  <>
                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
@@ -790,12 +803,12 @@ const App: React.FC = () => {
              )}
           </button>
           
-          <div className="w-px bg-slate-800 mx-1 h-6"></div>
+          <div className="w-px bg-slate-800 mx-1 h-6 shrink-0"></div>
           
           {/* Report Button */}
           <button 
              onClick={() => setIsReportModalOpen(true)}
-             className="p-1.5 px-2 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+             className="p-1.5 px-2 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors shrink-0"
              title="Generate PDF Report"
           >
              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
@@ -804,26 +817,26 @@ const App: React.FC = () => {
           {/* Settings Button */}
           <button 
              onClick={() => setIsSettingsOpen(true)}
-             className="p-1.5 px-2 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+             className="p-1.5 px-2 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors shrink-0"
              title="Settings"
           >
              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
           </button>
           
-          <div className="w-px bg-slate-800 mx-1 h-6"></div>
-          <button onClick={() => setIsGatePaletteOpen(!isGatePaletteOpen)} className={`px-3 py-1.5 text-xs font-semibold uppercase tracking-wider rounded transition-colors border shadow-sm ${isGatePaletteOpen ? 'bg-indigo-600/90 text-white border-indigo-500' : 'bg-slate-800 text-slate-300 border-transparent'}`}>
+          <div className="w-px bg-slate-800 mx-1 h-6 shrink-0"></div>
+          <button onClick={() => setIsGatePaletteOpen(!isGatePaletteOpen)} className={`px-3 py-1.5 text-xs font-semibold uppercase tracking-wider rounded transition-colors border shadow-sm shrink-0 ${isGatePaletteOpen ? 'bg-indigo-600/90 text-white border-indigo-500' : 'bg-slate-800 text-slate-300 border-transparent'}`}>
             Gates
           </button>
-          <div className="w-px bg-slate-800 mx-1 h-6"></div>
-          <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className={`px-3 py-1.5 text-xs font-semibold uppercase tracking-wider rounded transition-colors border shadow-sm ${isSidebarOpen ? 'bg-blue-600/90 text-white border-blue-500' : 'bg-slate-800 text-slate-300 border-transparent'}`}>
+          <div className="w-px bg-slate-800 mx-1 h-6 shrink-0"></div>
+          <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className={`px-3 py-1.5 text-xs font-semibold uppercase tracking-wider rounded transition-colors border shadow-sm shrink-0 ${isSidebarOpen ? 'bg-blue-600/90 text-white border-blue-500' : 'bg-slate-800 text-slate-300 border-transparent'}`}>
             Panel
           </button>
-           <div className="w-px bg-slate-800 mx-1 h-6"></div>
-          <button onClick={toggleBrowserFullScreen} className={`px-2 py-1.5 text-xs font-semibold uppercase tracking-wider bg-slate-800 rounded transition-colors text-slate-300 border border-transparent shadow-sm hover:bg-slate-700`} title="Toggle Full Screen">
+           <div className="w-px bg-slate-800 mx-1 h-6 shrink-0"></div>
+          <button onClick={toggleBrowserFullScreen} className={`px-2 py-1.5 text-xs font-semibold uppercase tracking-wider bg-slate-800 rounded transition-colors text-slate-300 border border-transparent shadow-sm hover:bg-slate-700 shrink-0`} title="Toggle Full Screen">
              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
           </button>
-          <div className="w-px bg-slate-800 mx-1 h-6"></div>
-          <button onClick={clearCircuit} disabled={isLocked} className={`px-4 py-1.5 text-xs font-semibold uppercase tracking-wider bg-slate-800 rounded transition-colors text-slate-300 border border-transparent shadow-sm ${isLocked ? 'opacity-50 cursor-not-allowed' : 'hover:bg-rose-500/20 hover:text-rose-400'}`}>
+          <div className="w-px bg-slate-800 mx-1 h-6 shrink-0"></div>
+          <button onClick={clearCircuit} disabled={isLocked} className={`px-4 py-1.5 text-xs font-semibold uppercase tracking-wider bg-slate-800 rounded transition-colors text-slate-300 border border-transparent shadow-sm shrink-0 ${isLocked ? 'opacity-50 cursor-not-allowed' : 'hover:bg-rose-500/20 hover:text-rose-400'}`}>
             Clear
           </button>
         </div>
@@ -834,8 +847,8 @@ const App: React.FC = () => {
         
         {/* A. Gate Palette */}
         <aside 
-            className={`bg-slate-900 border-r border-slate-800 flex flex-col items-center shrink-0 z-10 shadow-xl transition-all duration-300 overflow-hidden ${isLocked ? 'opacity-50 pointer-events-none grayscale' : ''}`}
-            style={{ width: isGatePaletteOpen ? '6rem' : 0, padding: isGatePaletteOpen ? '1.5rem 0' : 0 }}
+            className={`bg-slate-900 border-r border-slate-800 flex flex-col items-center shrink-0 z-30 shadow-xl transition-all duration-300 overflow-hidden absolute md:relative h-full ${isLocked ? 'opacity-50 pointer-events-none grayscale' : ''}`}
+            style={{ width: isGatePaletteOpen ? '6rem' : 0, padding: isGatePaletteOpen ? '1.5rem 0' : 0, transform: isGatePaletteOpen ? 'translateX(0)' : 'translateX(-100%)' }}
         >
           {/* Inner container with fixed width to prevent squishing */}
           <div className="w-24 flex flex-col items-center gap-4 overflow-y-auto custom-scrollbar h-full pb-6">
@@ -998,7 +1011,7 @@ const App: React.FC = () => {
 
         {/* C. Output Visualization & Tools */}
         <aside 
-            className={`bg-slate-900 border-l border-slate-800 flex flex-col shrink-0 shadow-2xl z-20 relative transition-[width] ease-in-out ${isResizing ? 'duration-0' : 'duration-300'}`}
+            className={`bg-slate-900 border-l border-slate-800 flex flex-col shrink-0 shadow-2xl z-30 absolute right-0 top-0 bottom-0 h-full md:relative transition-[width] ease-in-out ${isResizing ? 'duration-0' : 'duration-300'}`}
             style={{ width: isSidebarOpen ? sidebarWidth : 0 }}
         >
            <div className="absolute left-0 top-0 bottom-0 w-1.5 -ml-1 cursor-col-resize hover:bg-blue-500/50 z-50 transition-colors" onMouseDown={(e) => { e.preventDefault(); setIsResizing(true); }} />
@@ -1038,9 +1051,9 @@ const App: React.FC = () => {
                         </div>
 
                         <div className="flex flex-wrap gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800">
-                           {['statevector', 'qsphere', 'phasor', 'measure', 'entanglement', 'tunneling'].map(m => (
+                           {['statevector', 'qsphere', 'phasor', 'measure', 'entanglement', 'matrix', 'tunneling'].map(m => (
                               <button key={m} onClick={() => setVizMode(m as any)} className={`flex-1 py-1 px-2 text-[10px] uppercase font-bold rounded transition-colors whitespace-nowrap ${vizMode === m ? 'bg-slate-800 text-cyan-400 shadow ring-1 ring-slate-700' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-900'}`}>
-                                 {m === 'entanglement' ? 'Entangle' : m === 'qsphere' ? 'Q-Sphere' : m}
+                                 {m === 'entanglement' ? 'Entangle' : m === 'qsphere' ? 'Q-Sphere' : m === 'matrix' ? 'Matrix' : m}
                               </button>
                            ))}
                         </div>
@@ -1059,6 +1072,7 @@ const App: React.FC = () => {
                            {vizMode === 'phasor' && <PolarPlotVisualizer amplitudes={amplitudes} />}
                            {vizMode === 'measure' && <MeasurementLab amplitudes={amplitudes} />}
                            {vizMode === 'entanglement' && <EntanglementVisualizer amplitudes={amplitudes} />}
+                           {vizMode === 'matrix' && <UnitaryMatrixVisualizer gates={flattenedCircuit} numQubits={numQubits} />}
                            {vizMode === 'tunneling' && <QuantumTunnelingVisualizer />}
                         </div>
                      </div>
@@ -1117,7 +1131,7 @@ const App: React.FC = () => {
         {isFullScreenViz && (
             <div className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-xl flex flex-col animate-in fade-in duration-200">
                 <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
-                     <h2 className="text-xl font-bold text-cyan-400 uppercase tracking-widest">{vizMode === 'entanglement' ? 'Entanglement Graph' : vizMode === 'qsphere' ? 'Q-Sphere Superposition' : vizMode}</h2>
+                     <h2 className="text-xl font-bold text-cyan-400 uppercase tracking-widest">{vizMode === 'entanglement' ? 'Entanglement Graph' : vizMode === 'qsphere' ? 'Q-Sphere Superposition' : vizMode === 'matrix' ? 'Unitary Matrix' : vizMode}</h2>
                      <button onClick={() => setIsFullScreenViz(false)} className="p-2 bg-slate-800 rounded-full hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 transition-colors">
                         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                      </button>
@@ -1129,6 +1143,7 @@ const App: React.FC = () => {
                           {vizMode === 'phasor' && <PolarPlotVisualizer amplitudes={amplitudes} />}
                           {vizMode === 'measure' && <MeasurementLab amplitudes={amplitudes} />}
                           {vizMode === 'entanglement' && <EntanglementVisualizer amplitudes={amplitudes} />}
+                          {vizMode === 'matrix' && <UnitaryMatrixVisualizer gates={flattenedCircuit} numQubits={numQubits} />}
                           {vizMode === 'tunneling' && <QuantumTunnelingVisualizer />}
                      </div>
                 </div>
