@@ -2,7 +2,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { GateType, Gate, Message } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_API_KEY || '' });
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 // Hardware context string shared between functions
 const HARDWARE_CONTEXT = `
@@ -153,7 +153,7 @@ export const explainCircuit = async (
 ): Promise<string> => {
   // Legacy support using the streaming function but awaiting full response
   let fullText = "";
-  const iterator = await streamChat(gates, currentQuestion || "Explain this circuit", [], imageBase64 ?? null, language, numQubits);
+  const iterator = await streamChat(gates, currentQuestion || "Explain this circuit", [], imageBase64, language, numQubits);
   for await (const chunk of iterator) {
       fullText += chunk;
   }

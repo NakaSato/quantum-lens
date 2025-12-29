@@ -124,7 +124,7 @@ const QuantumRigVisualizer: React.FC<QuantumRigVisualizerProps> = ({ spec, numQu
     }
 
     // --- Animation State ---
-    const pulses: { mesh: THREE.Mesh, path: THREE.Curve<THREE.Vector3>, offset: number, speed: number }[] = [];
+    const pulses: { mesh: THREE.Mesh, path: THREE.CurvePath<THREE.Vector3>, offset: number, speed: number }[] = [];
     const particlesRef = useRef<THREE.Points | null>(null);
 
     // --- PROCEDURAL GENERATION ---

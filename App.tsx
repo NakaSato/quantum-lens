@@ -93,7 +93,6 @@ const App: React.FC = () => {
   const compactGrid = (g: (Gate | null)[][], mode: AlignmentMode): (Gate | null)[][] => {
     if (mode === 'freeform') return g;
 
-    // 1. Extract all existing gates in order
     const allGates: Gate[] = [];
     const seen = new Set<string>();
 
@@ -106,26 +105,18 @@ const App: React.FC = () => {
       });
     });
 
-    // 2. Prepare new empty grid
     const newGrid = Array.from({ length: numSteps }, () => Array(numQubits).fill(null));
     const nextAvailableStep = new Array(numQubits).fill(0);
 
-    // 3. Re-place gates according to mode
     allGates.forEach(gate => {
       const qT = gate.target;
       const qC = gate.control;
       
       let stepToPlace = 0;
       if (qC !== undefined) {
-        // Controlled gate depends on two wires
         stepToPlace = Math.max(nextAvailableStep[qT], nextAvailableStep[qC]);
       } else {
         stepToPlace = nextAvailableStep[qT];
-      }
-
-      if (mode === 'layers') {
-          // In layers mode, we don't allow "gaps" between bits of different qubits 
-          // that share the same moment index. Actually standard Layering is just compacting.
       }
 
       if (stepToPlace < numSteps) {
@@ -688,163 +679,163 @@ const App: React.FC = () => {
       <ReportModal isOpen={isReportModalOpen} onClose={() => setIsReportModalOpen(false)} onGenerate={handleGenerateReport} projectTitle={projectTitle} />
       {rigSpec && <QuantumRigVisualizer spec={rigSpec} numQubits={numQubits} gates={flattenedCircuit} onClose={() => setRigSpec(null)} />}
 
-      <header className="flex items-center justify-between px-6 py-3 bg-slate-900 border-b border-slate-800 shrink-0 z-20 shadow-lg">
-        <div className="flex items-center gap-3 group cursor-pointer mr-4">
-           <div className="relative w-9 h-9 flex items-center justify-center bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 rounded-lg shadow-[0_0_15px_rgba(168,85,247,0.4)] transition-all duration-300">
-               <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      {/* Redesigned Desktop-Friendly Navbar */}
+      <header className="flex flex-col md:flex-row items-center justify-between px-4 md:px-6 py-3 bg-slate-900 border-b border-slate-800 shrink-0 z-20 shadow-lg gap-4 md:gap-0">
+        
+        {/* Left: Branding & Project Title */}
+        <div className="flex items-center gap-4 w-full md:w-auto">
+           <div className="relative w-10 h-10 flex items-center justify-center bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 rounded-xl shadow-[0_0_20px_rgba(168,85,247,0.3)] transition-all duration-300">
+               <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                    <circle cx="12" cy="12" r="3" strokeWidth="2" />
                    <ellipse cx="12" cy="12" rx="8" ry="3" strokeWidth="1.5" transform="rotate(45 12 12)" />
                    <ellipse cx="12" cy="12" rx="8" ry="3" strokeWidth="1.5" transform="rotate(-45 12 12)" />
                </svg>
            </div>
-           <div className="flex flex-col hidden sm:flex">
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest leading-none mb-0.5">QuantumLens</span>
+           <div className="flex flex-col min-w-0">
+              <span className="text-[10px] text-indigo-400 font-black uppercase tracking-[0.2em] leading-none mb-1">QuantumLens Lab</span>
               <input 
                 type="text" 
                 value={projectTitle} 
                 onChange={(e) => !isLocked && setProjectTitle(e.target.value)}
                 readOnly={isLocked}
-                className={`bg-transparent text-white font-bold text-sm md:text-base border border-transparent rounded px-1 -ml-1 outline-none w-40 md:w-64 transition-all placeholder-slate-500 ${isLocked ? 'cursor-default focus:border-transparent' : 'hover:border-slate-600 focus:border-cyan-500 focus:bg-slate-800'}`}
+                className={`bg-transparent text-white font-bold text-base border-b border-transparent hover:border-slate-700 focus:border-cyan-500 outline-none w-full max-w-[200px] transition-all placeholder-slate-600 truncate ${isLocked ? 'cursor-default border-none' : ''}`}
                 placeholder="Untitled Circuit"
               />
            </div>
         </div>
-        
-        <div className="flex gap-2 items-center overflow-x-auto no-scrollbar max-w-[calc(100vw-80px)] md:max-w-none px-2 mask-linear-fade">
-             
-             <button 
-                onClick={handleMagicGenerate}
-                disabled={isGeneratingRig}
-                className="group relative px-3 py-1.5 rounded bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-white text-xs font-bold uppercase tracking-wider flex items-center gap-2 shadow-lg hover:shadow-orange-500/30 transition-all active:scale-95 disabled:grayscale shrink-0"
-                title="Generate 3D Quantum Rig"
-             >
-                {isGeneratingRig ? (
-                    <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                ) : (
-                    <svg className="w-4 h-4 text-yellow-200" fill="currentColor" viewBox="0 0 20 20"><path d="M10 1l2.5 6 6 2.5-6 2.5-2.5 6-2.5-6-6-2.5 6-2.5L10 1z" /></svg>
-                )}
-                <span className="hidden md:inline">Magic Model</span>
-             </button>
 
-             <div className="w-px bg-slate-800 mx-1 h-6 shrink-0"></div>
+        {/* Center: Major Tool Groups */}
+        <div className="flex flex-wrap items-center justify-center gap-3 overflow-x-auto no-scrollbar pb-1 md:pb-0">
+            
+            {/* Group: AI Generation */}
+            <div className="flex items-center gap-2 pr-2">
+                <button 
+                    onClick={handleMagicGenerate}
+                    disabled={isGeneratingRig}
+                    className="group relative h-9 px-4 rounded-lg bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-white text-[11px] font-black uppercase tracking-wider flex items-center gap-2 shadow-lg hover:shadow-orange-500/30 transition-all active:scale-95 disabled:grayscale shrink-0"
+                    title="Generate 3D Quantum Rig"
+                >
+                    {isGeneratingRig ? (
+                        <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                    ) : (
+                        <svg className="w-4 h-4 text-yellow-200" fill="currentColor" viewBox="0 0 20 20"><path d="M10 1l2.5 6 6 2.5-6 2.5-2.5 6-2.5-6-6-2.5 6-2.5L10 1z" /></svg>
+                    )}
+                    <span className="hidden lg:inline">Magic Model</span>
+                </button>
+            </div>
 
-             {/* Alignment Controls - Similar to IBM Quantum Composer */}
-             <div className="flex bg-slate-800 rounded p-0.5 gap-0.5 mr-2 shadow-inner border border-slate-700/50 shrink-0">
-               <button 
-                  onClick={() => toggleAlignmentMode('freeform')}
-                  className={`p-1.5 px-3 rounded transition-all flex items-center gap-2 text-xs font-semibold uppercase tracking-wider ${alignmentMode === 'freeform' ? 'bg-cyan-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-700 hover:text-slate-300'}`}
-                  title="Freeform Alignment: Place gates anywhere"
-               >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" /></svg>
-               </button>
-               <button 
-                  onClick={() => toggleAlignmentMode('left')}
-                  className={`p-1.5 px-3 rounded transition-all flex items-center gap-2 text-xs font-semibold uppercase tracking-wider ${alignmentMode === 'left' ? 'bg-cyan-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-700 hover:text-slate-300'}`}
-                  title="Left Alignment: Compress gates to the left"
-               >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" /></svg>
-               </button>
-               <button 
-                  onClick={() => toggleAlignmentMode('layers')}
-                  className={`p-1.5 px-3 rounded transition-all flex items-center gap-2 text-xs font-semibold uppercase tracking-wider ${alignmentMode === 'layers' ? 'bg-cyan-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-700 hover:text-slate-300'}`}
-                  title="Layers Alignment: Synchronize gates into vertical moments"
-               >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
-               </button>
-             </div>
+            <div className="w-px h-6 bg-slate-800 hidden md:block"></div>
 
-             <div className="w-px bg-slate-800 mx-1 h-6 shrink-0"></div>
+            {/* Group: Layout Alignment */}
+            <div className="flex bg-slate-800/80 p-1 rounded-lg border border-slate-700/50 shadow-inner">
+               {[
+                  { mode: 'freeform', icon: 'M4 6h16M4 10h16M4 14h16M4 18h16', label: 'Free' },
+                  { mode: 'left', icon: 'M11 19l-7-7 7-7m8 14l-7-7 7-7', label: 'Left' },
+                  { mode: 'layers', icon: 'M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10', label: 'Grid' }
+               ].map(item => (
+                 <button 
+                    key={item.mode}
+                    onClick={() => toggleAlignmentMode(item.mode as AlignmentMode)}
+                    className={`h-7 px-3 rounded-md transition-all flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-tight ${alignmentMode === item.mode ? 'bg-cyan-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-700 hover:text-slate-300'}`}
+                    title={`${item.label} Alignment`}
+                 >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d={item.icon} /></svg>
+                    <span className="hidden xl:inline">{item.label}</span>
+                 </button>
+               ))}
+            </div>
 
-             <div className="flex bg-slate-800 rounded p-0.5 gap-0.5 mr-2 shadow-inner border border-slate-700/50 shrink-0">
+            <div className="w-px h-6 bg-slate-800 hidden md:block"></div>
+
+            {/* Group: History Controls */}
+            <div className="flex bg-slate-800/80 p-1 rounded-lg border border-slate-700/50 shadow-inner">
                <button 
                   onClick={undo} 
                   disabled={currentStep === 0 || isLocked} 
-                  className={`p-1.5 px-3 rounded transition-colors flex items-center gap-2 text-xs font-semibold uppercase tracking-wider ${currentStep === 0 || isLocked ? 'text-slate-600 cursor-not-allowed' : 'text-slate-300 hover:bg-slate-700 hover:text-white'}`}
+                  className={`h-7 px-3 rounded-md transition-all flex items-center gap-2 text-[10px] font-bold uppercase tracking-tight ${currentStep === 0 || isLocked ? 'text-slate-600 cursor-not-allowed opacity-50' : 'text-slate-300 hover:bg-slate-700 hover:text-white'}`}
                   title="Undo (Ctrl+Z)"
                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" /></svg>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" /></svg>
                </button>
-               <div className="w-px bg-slate-600 my-1 opacity-30"></div>
+               <div className="w-px h-4 bg-slate-700 self-center"></div>
                <button 
                   onClick={redo} 
                   disabled={currentStep === history.length - 1 || isLocked} 
-                  className={`p-1.5 px-3 rounded transition-colors flex items-center gap-2 text-xs font-semibold uppercase tracking-wider ${currentStep === history.length - 1 || isLocked ? 'text-slate-600 cursor-not-allowed' : 'text-slate-300 hover:bg-slate-700 hover:text-white'}`}
+                  className={`h-7 px-3 rounded-md transition-all flex items-center gap-2 text-[10px] font-bold uppercase tracking-tight ${currentStep === history.length - 1 || isLocked ? 'text-slate-600 cursor-not-allowed opacity-50' : 'text-slate-300 hover:bg-slate-700 hover:text-white'}`}
                   title="Redo (Ctrl+Y)"
                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 10h-10a8 8 0 00-8 8v2M21 10l-6 6m6-6l-6-6" /></svg>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M21 10h-10a8 8 0 00-8 8v2M21 10l-6 6m6-6l-6-6" /></svg>
                </button>
-             </div>
+            </div>
 
-             <div className="flex bg-slate-800 rounded p-0.5 gap-0.5 mr-2 shadow-inner border border-slate-700/50 shrink-0">
-             <button onClick={saveProject} title="Save Project (Ctrl+S)" className="p-1.5 px-3 rounded hover:bg-slate-700 transition-colors text-slate-300 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider">
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" /></svg>
-                <span className="hidden md:inline">Save</span>
-             </button>
-             <div className="w-px bg-slate-600 my-1 opacity-30"></div>
-             <button onClick={() => !isLocked && projectFileInputRef.current?.click()} disabled={isLocked} className={`p-1.5 px-3 rounded transition-colors text-slate-300 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider ${isLocked ? 'opacity-50 cursor-not-allowed' : 'hover:bg-slate-700'}`}>
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
-                <span className="hidden md:inline">Load</span>
-             </button>
-             <input type="file" ref={projectFileInputRef} onChange={loadProject} accept=".qjson,.json" className="hidden" disabled={isLocked} />
-          </div>
+            {/* Group: File Operations */}
+            <div className="flex gap-2">
+                <div className="flex bg-slate-800/80 p-1 rounded-lg border border-slate-700/50 shadow-inner">
+                    <button onClick={saveProject} title="Save Project (Ctrl+S)" className="h-7 px-3 rounded-md hover:bg-slate-700 transition-all text-slate-300 flex items-center gap-2 text-[10px] font-bold uppercase tracking-tight">
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" /></svg>
+                        <span className="hidden xl:inline">Save</span>
+                    </button>
+                    <div className="w-px h-4 bg-slate-700 self-center"></div>
+                    <button onClick={() => !isLocked && projectFileInputRef.current?.click()} disabled={isLocked} className={`h-7 px-3 rounded-md transition-all text-slate-300 flex items-center gap-2 text-[10px] font-bold uppercase tracking-tight ${isLocked ? 'opacity-30 cursor-not-allowed' : 'hover:bg-slate-700'}`}>
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+                        <span className="hidden xl:inline">Load</span>
+                    </button>
+                    <input type="file" ref={projectFileInputRef} onChange={loadProject} accept=".qjson,.json" className="hidden" />
+                </div>
+                
+                <select onChange={loadExample} disabled={isLocked} className={`h-9 bg-slate-800 text-slate-300 text-[10px] font-bold uppercase tracking-wider px-3 rounded-lg border border-slate-700 outline-none transition-all focus:ring-2 focus:ring-cyan-500/50 cursor-pointer ${isLocked ? 'opacity-30' : 'hover:bg-slate-700'}`} defaultValue="">
+                    <option value="" disabled>Library</option>
+                    {CIRCUIT_EXAMPLES.map((ex, idx) => (
+                        <option key={idx} value={idx}>{ex.name}</option>
+                    ))}
+                </select>
+            </div>
+        </div>
 
-          <div className="relative shrink-0">
-             <select onChange={loadExample} disabled={isLocked} className={`bg-slate-800 text-slate-300 text-xs font-semibold uppercase tracking-wider py-1.5 pl-3 pr-8 rounded appearance-none border border-transparent outline-none transition-colors shadow-sm ${isLocked ? 'opacity-50 cursor-not-allowed' : 'hover:bg-slate-700 hover:border-slate-500 cursor-pointer focus:ring-1 focus:ring-cyan-500'}`} defaultValue="">
-               <option value="" disabled>Load Example</option>
-               {CIRCUIT_EXAMPLES.map((ex, idx) => (
-                 <option key={idx} value={idx}>{ex.name}</option>
-               ))}
-             </select>
-          </div>
-          
-           <div className="w-px bg-slate-800 mx-1 h-6 shrink-0"></div>
-           <button onClick={() => setIsLocked(!isLocked)} className={`p-1.5 px-3 rounded transition-all duration-300 text-xs font-semibold uppercase tracking-wider flex items-center gap-2 border shrink-0 ${isLocked ? 'bg-amber-950/40 text-amber-400 border-amber-500/30' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-transparent'}`}>
+        {/* Right: Workspace & State Toggles */}
+        <div className="flex items-center gap-2 w-full md:w-auto justify-end">
+            
+           <button onClick={() => setIsLocked(!isLocked)} className={`h-9 px-4 rounded-lg transition-all duration-300 text-[11px] font-black uppercase tracking-widest flex items-center gap-2 border shadow-lg ${isLocked ? 'bg-amber-950/40 text-amber-400 border-amber-500/30' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'}`}>
              {isLocked ? (
                  <>
-                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
-                   <span className="hidden md:inline">Locked</span>
+                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
+                   <span>Locked</span>
                  </>
              ) : (
                  <>
-                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" /></svg>
-                   <span className="hidden md:inline">Edit Mode</span>
+                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" /></svg>
+                   <span>Edit Mode</span>
                  </>
              )}
           </button>
-          
-          <div className="w-px bg-slate-800 mx-1 h-6 shrink-0"></div>
-          
-          <button onClick={() => setIsReportModalOpen(true)} className="p-1.5 px-2 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors shrink-0" title="Generate PDF Report">
-             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-          </button>
 
-          <button onClick={() => setIsSettingsOpen(true)} className="p-1.5 px-2 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors shrink-0" title="Settings">
-             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-          </button>
-          
-          <div className="w-px bg-slate-800 mx-1 h-6 shrink-0"></div>
-          <button onClick={() => setIsGatePaletteOpen(!isGatePaletteOpen)} className={`px-3 py-1.5 text-xs font-semibold uppercase tracking-wider rounded transition-colors border shadow-sm shrink-0 ${isGatePaletteOpen ? 'bg-indigo-600/90 text-white border-indigo-500' : 'bg-slate-800 text-slate-300 border-transparent'}`}>
-            Gates
-          </button>
-          <div className="w-px bg-slate-800 mx-1 h-6 shrink-0"></div>
-          <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className={`px-3 py-1.5 text-xs font-semibold uppercase tracking-wider rounded transition-colors border shadow-sm shrink-0 ${isSidebarOpen ? 'bg-blue-600/90 text-white border-blue-500' : 'bg-slate-800 text-slate-300 border-transparent'}`}>
-            Panel
-          </button>
-           <div className="w-px bg-slate-800 mx-1 h-6 shrink-0"></div>
-          <button onClick={toggleBrowserFullScreen} className={`px-2 py-1.5 text-xs font-semibold uppercase tracking-wider bg-slate-800 rounded transition-colors text-slate-300 border border-transparent shadow-sm hover:bg-slate-700 shrink-0`} title="Toggle Full Screen">
-             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
-          </button>
-          <div className="w-px bg-slate-800 mx-1 h-6 shrink-0"></div>
-          <button onClick={clearCircuit} disabled={isLocked} className={`px-4 py-1.5 text-xs font-semibold uppercase tracking-wider bg-slate-800 rounded transition-colors text-slate-300 border border-transparent shadow-sm shrink-0 ${isLocked ? 'opacity-50 cursor-not-allowed' : 'hover:bg-rose-500/20 hover:text-rose-400'}`}>
-            Clear
-          </button>
+          <div className="flex bg-slate-800/80 p-1 rounded-lg border border-slate-700/50 shadow-inner">
+             <button onClick={() => setIsReportModalOpen(true)} className="w-9 h-7 rounded-md hover:bg-slate-700 text-slate-400 hover:text-white transition-all flex items-center justify-center" title="Generate PDF Report">
+                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+             </button>
+             <button onClick={() => setIsSettingsOpen(true)} className="w-9 h-7 rounded-md hover:bg-slate-700 text-slate-400 hover:text-white transition-all flex items-center justify-center" title="System Settings">
+                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /></svg>
+             </button>
+             <button onClick={toggleBrowserFullScreen} className="w-9 h-7 rounded-md hover:bg-slate-700 text-slate-400 hover:text-white transition-all flex items-center justify-center" title="Full Screen View">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
+             </button>
+          </div>
+
+          <div className="flex gap-2 ml-2">
+             <button onClick={() => setIsGatePaletteOpen(!isGatePaletteOpen)} className={`h-9 px-3 rounded-lg text-[10px] font-bold uppercase border transition-all ${isGatePaletteOpen ? 'bg-indigo-600/90 text-white border-indigo-400 shadow-lg shadow-indigo-900/20' : 'bg-slate-800 text-slate-400 border-slate-700'}`}>
+                Gates
+             </button>
+             <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className={`h-9 px-3 rounded-lg text-[10px] font-bold uppercase border transition-all ${isSidebarOpen ? 'bg-blue-600/90 text-white border-blue-400 shadow-lg shadow-blue-900/20' : 'bg-slate-800 text-slate-400 border-slate-700'}`}>
+                Panel
+             </button>
+          </div>
         </div>
       </header>
 
       <div className="flex flex-1 overflow-hidden relative">
         <aside className={`bg-slate-900 border-r border-slate-800 flex flex-col items-center shrink-0 z-30 shadow-xl transition-all duration-300 overflow-hidden absolute md:relative h-full ${isLocked ? 'opacity-50 pointer-events-none grayscale' : ''}`} style={{ width: isGatePaletteOpen ? '6rem' : 0, padding: isGatePaletteOpen ? '1.5rem 0' : 0, transform: isGatePaletteOpen ? 'translateX(0)' : 'translateX(-100%)' }}>
           <div className="w-24 flex flex-col items-center gap-4 overflow-y-auto custom-scrollbar h-full pb-6">
-            <div className="text-[10px] uppercase text-slate-500 font-bold tracking-widest mb-2 whitespace-nowrap">Gates</div>
+            <div className="text-[10px] uppercase text-slate-500 font-bold tracking-widest mb-2 whitespace-nowrap">Palette</div>
             {PALETTE.map((gate) => (
                 <div key={gate.id} draggable={!isLocked} onDragStart={(e) => handleDragStart(e, gate)} onClick={() => handleGateClick(gate)} className={`w-12 h-12 md:w-14 md:h-14 ${gate.color} flex items-center justify-center rounded-lg cursor-pointer shadow-lg font-bold text-white select-none hover:scale-110 hover:shadow-xl hover:ring-2 ring-white/20 transition-all z-20 active:scale-95 shrink-0`}>
                 {gate.id === 'CX' ? '⊕' : gate.id}
@@ -901,18 +892,31 @@ const App: React.FC = () => {
                  </div>
               </div>
           </div>
-          <div className="absolute bottom-6 left-6 flex flex-col gap-2 z-50">
-             <div className="bg-slate-900/80 backdrop-blur border border-slate-700 rounded-lg p-1.5 flex flex-col shadow-2xl">
-                <button onClick={() => setZoom(z => Math.min(z + 0.2, 3.0))} className="p-2 hover:bg-slate-800 text-slate-300 rounded" title="Zoom In"><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg></button>
-                <div className="h-px bg-slate-700 my-1"></div>
-                <button onClick={() => setZoom(z => Math.max(z - 0.2, 0.4))} className="p-2 hover:bg-slate-800 text-slate-300 rounded" title="Zoom Out"><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" /></svg></button>
-                <div className="h-px bg-slate-700 my-1"></div>
-                <button onClick={() => fitToCircuit()} className="p-2 hover:bg-slate-800 text-emerald-400 rounded" title="Fit to Circuit"><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg></button>
-                 <div className="h-px bg-slate-700 my-1"></div>
-                <button onClick={resetView} className="p-2 hover:bg-slate-800 text-cyan-400 rounded font-bold text-[10px]" title="Reset View">1:1</button>
+          
+          {/* Enhanced Bottom HUD View Controls */}
+          <div className="absolute bottom-6 left-6 flex flex-col gap-3 z-50">
+             <div className="bg-slate-900/90 backdrop-blur-xl border border-slate-700 rounded-xl p-1.5 flex flex-col shadow-[0_10px_40px_-10px_rgba(0,0,0,0.5)]">
+                <button onClick={() => setZoom(z => Math.min(z + 0.2, 3.0))} className="p-2.5 hover:bg-slate-800 text-slate-300 rounded-lg transition-all" title="Zoom In"><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" /></svg></button>
+                <div className="h-px bg-slate-800 mx-2"></div>
+                <button onClick={() => setZoom(z => Math.max(z - 0.2, 0.4))} className="p-2.5 hover:bg-slate-800 text-slate-300 rounded-lg transition-all" title="Zoom Out"><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M20 12H4" /></svg></button>
+                <div className="h-px bg-slate-800 mx-2"></div>
+                <button onClick={() => fitToCircuit()} className="p-2.5 hover:bg-slate-800 text-emerald-400 rounded-lg transition-all" title="Fit to Circuit"><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg></button>
+                 <div className="h-px bg-slate-800 mx-2"></div>
+                <button onClick={resetView} className="p-2.5 hover:bg-slate-800 text-cyan-400 rounded-lg font-black text-[9px] transition-all" title="Reset View">1:1</button>
              </div>
-             <div className="bg-slate-950/80 px-2 py-1 rounded text-[10px] text-slate-500 font-mono text-center border border-slate-800">{Math.round(zoom * 100)}%</div>
+             <div className="bg-slate-900/90 backdrop-blur-xl px-3 py-1.5 rounded-lg text-[10px] text-slate-400 font-black font-mono text-center border border-slate-700 shadow-lg">{Math.round(zoom * 100)}%</div>
           </div>
+          
+          {/* Quick Clear Floating Button */}
+          {!isLocked && (
+              <button 
+                onClick={clearCircuit}
+                className="absolute bottom-6 right-6 px-5 py-2.5 bg-slate-900/90 backdrop-blur-xl border border-rose-500/30 text-rose-400 text-[10px] font-black uppercase tracking-widest rounded-xl shadow-xl hover:bg-rose-500/10 transition-all z-50 flex items-center gap-2 group"
+              >
+                  <svg className="w-3.5 h-3.5 group-hover:rotate-12 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                  Clear System
+              </button>
+          )}
         </main>
 
         <aside className={`bg-slate-900 border-l border-slate-800 flex flex-col shrink-0 shadow-2xl z-30 absolute right-0 top-0 bottom-0 h-full md:relative transition-[width] ease-in-out ${isResizing ? 'duration-0' : 'duration-300'}`} style={{ width: isSidebarOpen ? sidebarWidth : 0 }}>
