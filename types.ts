@@ -1,6 +1,8 @@
 
 export type GateType = 'H' | 'X' | 'Z' | 'Y' | 'S' | 'T' | 'I' | 'CX' | 'CZ' | 'CY' | 'CS';
 
+export type AlignmentMode = 'freeform' | 'left' | 'layers';
+
 export interface Gate {
   id: string;
   type: GateType;

@@ -153,7 +153,7 @@ export const explainCircuit = async (
 ): Promise<string> => {
   // Legacy support using the streaming function but awaiting full response
   let fullText = "";
-  const iterator = await streamChat(gates, currentQuestion || "Explain this circuit", [], imageBase64 ?? null, language, numQubits);
+  const iterator = await streamChat(gates, currentQuestion || "Explain this circuit", [], imageBase64, language, numQubits);
   for await (const chunk of iterator) {
       fullText += chunk;
   }

@@ -19,7 +19,7 @@ import SettingsModal from './components/SettingsModal';
 import ReportModal from './components/ReportModal';
 import { generatePDFReport } from './services/reportService';
 import { generateRigSpecification, RigSpecification } from './services/geminiService';
-import { Gate, GateType, Complex, QubitState } from './types';
+import { Gate, GateType, Complex, QubitState, AlignmentMode } from './types';
 import { CIRCUIT_EXAMPLES } from './data/circuitExamples';
 
 // --- Complex Math Helpers ---
@@ -43,18 +43,16 @@ interface ProjectFile {
   currentStep: number;
   timestamp: number;
   config?: { qubits: number; steps: number };
+  alignment?: AlignmentMode;
 }
 
 const PALETTE: DraggableGate[] = [
-  // Pauli Gates
   { id: 'H', label: 'H (Hadamard)', color: 'bg-blue-600' },
   { id: 'X', label: 'X (NOT)', color: 'bg-pink-600' },
   { id: 'Y', label: 'Y (Pauli-Y)', color: 'bg-teal-600' },
   { id: 'Z', label: 'Z (Phase π)', color: 'bg-orange-500' },
-  // Phase Gates
   { id: 'S', label: 'S (Phase π/2)', color: 'bg-purple-600' },
   { id: 'T', label: 'T (Phase π/4)', color: 'bg-fuchsia-600' },
-  // Controlled Gates
   { id: 'CX', label: 'CNOT', color: 'bg-sky-500' },
   { id: 'CZ', label: 'CZ (Control-Z)', color: 'bg-emerald-500' },
   { id: 'CY', label: 'CY (Control-Y)', color: 'bg-teal-500' },
@@ -62,59 +60,98 @@ const PALETTE: DraggableGate[] = [
 ];
 
 const App: React.FC = () => {
-  // --- Config State ---
   const [numQubits, setNumQubits] = useState(4);
   const [numSteps, setNumSteps] = useState(20);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  const [alignmentMode, setAlignmentMode] = useState<AlignmentMode>('freeform');
 
-  // --- History State Management ---
-  // Initial state depends on numQubits and numSteps
   const [history, setHistory] = useState<(Gate | null)[][][]>([
     Array.from({ length: 20 }, () => Array(4).fill(null))
   ]);
   const [currentStep, setCurrentStep] = useState(0);
 
-  // Derived Grid State
   const grid = history[currentStep];
 
-  // --- Project Management State ---
   const [projectTitle, setProjectTitle] = useState("Untitled Circuit");
   const projectFileInputRef = useRef<HTMLInputElement>(null);
   
-  // --- UI State ---
   const [isLocked, setIsLocked] = useState(false);
   const [isFullScreenBloch, setIsFullScreenBloch] = useState(false);
   const [isFullScreenViz, setIsFullScreenViz] = useState(false); 
   
-  // --- Magic Feature State ---
   const [rigSpec, setRigSpec] = useState<RigSpecification | null>(null);
   const [isGeneratingRig, setIsGeneratingRig] = useState(false);
 
-  // --- Zoom & Pan State ---
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const lastMousePos = useRef({ x: 0, y: 0 });
   const boardRef = useRef<HTMLDivElement>(null);
 
-  // Handle Config Change (Resize Logic)
+  // --- Alignment Logic Implementation ---
+  const compactGrid = (g: (Gate | null)[][], mode: AlignmentMode): (Gate | null)[][] => {
+    if (mode === 'freeform') return g;
+
+    // 1. Extract all existing gates in order
+    const allGates: Gate[] = [];
+    const seen = new Set<string>();
+
+    g.forEach(step => {
+      step.forEach(gate => {
+        if (gate && !seen.has(gate.id)) {
+          allGates.push(gate);
+          seen.add(gate.id);
+        }
+      });
+    });
+
+    // 2. Prepare new empty grid
+    const newGrid = Array.from({ length: numSteps }, () => Array(numQubits).fill(null));
+    const nextAvailableStep = new Array(numQubits).fill(0);
+
+    // 3. Re-place gates according to mode
+    allGates.forEach(gate => {
+      const qT = gate.target;
+      const qC = gate.control;
+      
+      let stepToPlace = 0;
+      if (qC !== undefined) {
+        // Controlled gate depends on two wires
+        stepToPlace = Math.max(nextAvailableStep[qT], nextAvailableStep[qC]);
+      } else {
+        stepToPlace = nextAvailableStep[qT];
+      }
+
+      if (mode === 'layers') {
+          // In layers mode, we don't allow "gaps" between bits of different qubits 
+          // that share the same moment index. Actually standard Layering is just compacting.
+      }
+
+      if (stepToPlace < numSteps) {
+        newGrid[stepToPlace][qT] = gate;
+        nextAvailableStep[qT] = stepToPlace + 1;
+        if (qC !== undefined) {
+          nextAvailableStep[qC] = stepToPlace + 1;
+        }
+      }
+    });
+
+    return newGrid;
+  };
+
   const handleConfigChange = (newQubits: number, newSteps: number) => {
-    // If we change dimensions, we attempt to preserve existing gates
-    // but truncate if shrinking.
     setNumQubits(newQubits);
     setNumSteps(newSteps);
 
     const resizeGrid = (g: (Gate | null)[][]) => {
         let newGrid = [...g];
-        // 1. Resize Steps
         if (newSteps > newGrid.length) {
             const extra = Array.from({ length: newSteps - newGrid.length }, () => Array(newQubits).fill(null));
             newGrid = [...newGrid, ...extra];
         } else {
             newGrid = newGrid.slice(0, newSteps);
         }
-        // 2. Resize Wires
         newGrid = newGrid.map(step => {
             let newStep = [...step];
             if (newQubits > newStep.length) {
@@ -130,11 +167,21 @@ const App: React.FC = () => {
     setHistory(prev => prev.map(resizeGrid));
   };
 
-  // Helper to update grid with history
   const updateGrid = (newGrid: (Gate | null)[][]) => {
     if (isLocked) return;
+    const finalGrid = compactGrid(newGrid, alignmentMode);
     const newHistory = history.slice(0, currentStep + 1);
-    newHistory.push(newGrid);
+    newHistory.push(finalGrid);
+    setHistory(newHistory);
+    setCurrentStep(newHistory.length - 1);
+  };
+
+  const toggleAlignmentMode = (mode: AlignmentMode) => {
+    if (isLocked) return;
+    setAlignmentMode(mode);
+    const alignedGrid = compactGrid(grid, mode);
+    const newHistory = history.slice(0, currentStep + 1);
+    newHistory.push(alignedGrid);
     setHistory(newHistory);
     setCurrentStep(newHistory.length - 1);
   };
@@ -161,7 +208,6 @@ const App: React.FC = () => {
       }
   };
 
-  // --- View Control ---
   const resetView = () => {
     setZoom(1);
     setPan({ x: 0, y: 0 });
@@ -169,38 +215,29 @@ const App: React.FC = () => {
 
   const fitToCircuit = (targetGrid = grid) => {
     if (!boardRef.current) return;
-    
-    // 1. Identify active area (max step index with a gate)
     let maxStep = -1;
     targetGrid.forEach((stepGates, sIdx) => {
         if (stepGates.some(g => g !== null)) maxStep = sIdx;
     });
 
     const visibleSteps = Math.max(maxStep + 4, 6); 
-    
     const isMobile = window.innerWidth < 768;
     const STEP_W = isMobile ? 64 : 80;
     const WIRE_LABEL_W = 64; 
     const PADDING_X = 96;
-    
     const usedWidth = visibleSteps * STEP_W + WIRE_LABEL_W + PADDING_X;
     const totalWidth = numSteps * STEP_W + WIRE_LABEL_W + PADDING_X;
-
     const availableWidth = boardRef.current.clientWidth;
     
     let newZoom = availableWidth / usedWidth;
     newZoom = Math.min(Math.max(newZoom, 0.5), 1.3); 
-    
     const newPanX = (totalWidth / 2) - (usedWidth / 2);
-    
     setZoom(newZoom);
     setPan({ x: newPanX, y: 0 });
   };
   
-  // Auto-resize listener
   useEffect(() => {
       const handleResize = () => {
-          // Debounce fit to circuit
           const timeoutId = setTimeout(() => fitToCircuit(), 100);
           return () => clearTimeout(timeoutId);
       };
@@ -220,25 +257,22 @@ const App: React.FC = () => {
 
   const handleMagicGenerate = async () => {
       setIsGeneratingRig(true);
-      
-      // Calculate depth
       let depth = 0;
       grid.forEach((step, i) => { if (step.some(g => g !== null)) depth = i + 1; });
-      
       const spec = await generateRigSpecification(numQubits, depth);
       setRigSpec(spec);
       setIsGeneratingRig(false);
   };
 
-  // --- Save / Load Logic ---
   const saveProject = () => {
     const projectData: ProjectFile = {
-      version: "1.1",
+      version: "1.2",
       title: projectTitle,
       history: history,
       currentStep: currentStep,
       timestamp: Date.now(),
-      config: { qubits: numQubits, steps: numSteps }
+      config: { qubits: numQubits, steps: numSteps },
+      alignment: alignmentMode
     };
     const blob = new Blob([JSON.stringify(projectData, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -264,13 +298,13 @@ const App: React.FC = () => {
         const data = JSON.parse(content) as ProjectFile;
         
         if (data.history && Array.isArray(data.history)) {
-          // Restore config if present, otherwise default to 4x20 or infer from history
           const loadedQubits = data.config?.qubits || data.history[0][0].length;
           const loadedSteps = data.config?.steps || data.history[0].length;
           
           setNumQubits(loadedQubits);
           setNumSteps(loadedSteps);
           setHistory(data.history);
+          setAlignmentMode(data.alignment || 'freeform');
           
           const newStep = typeof data.currentStep === 'number' ? Math.min(data.currentStep, data.history.length - 1) : data.history.length - 1;
           setCurrentStep(newStep);
@@ -289,7 +323,6 @@ const App: React.FC = () => {
     e.target.value = ''; 
   };
 
-  // Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
@@ -322,22 +355,17 @@ const App: React.FC = () => {
   const [vizMode, setVizMode] = useState<'statevector' | 'qsphere' | 'phasor' | 'measure' | 'tunneling' | 'entanglement' | 'matrix'>('statevector');
   const [dragOverCell, setDragOverCell] = useState<{ step: number, wire: number } | null>(null);
 
-  // Sidebar Resize State
   const [sidebarWidth, setSidebarWidth] = useState(384); 
-  // Determine initial sidebar state based on screen width
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => window.innerWidth >= 768);
   const [isResizing, setIsResizing] = useState(false);
 
-  // Gates Palette State
   const [isGatePaletteOpen, setIsGatePaletteOpen] = useState(true);
 
-  // Popup Menu State
   const [activePopup, setActivePopup] = useState<{ step: number, wire: number, x: number, y: number } | null>(null);
 
-  // --- Simulation Engine ---
   const flattenedCircuit = useMemo(() => {
     const circuit: Gate[] = [];
-    grid.forEach((step, stepIdx) => {
+    grid.forEach((step) => {
       step.forEach((gate) => {
         if (gate) circuit.push(gate);
       });
@@ -346,28 +374,23 @@ const App: React.FC = () => {
   }, [grid]);
 
   useEffect(() => {
-    // Generic Simulation for N Qubits
     const numStates = 1 << numQubits;
     let state = new Array(numStates).fill(zero);
-    state[0] = one; // Initial State |0...0>
+    state[0] = one; 
     
     const INV_SQRT_2 = 1 / Math.sqrt(2);
 
     const applyGate = (u00: Complex, u01: Complex, u10: Complex, u11: Complex, target: number) => {
        const newState = [...state];
        const halfStates = numStates / 2;
-       
        for (let i = 0; i < halfStates; i++) {
            const lowMask = (1 << target) - 1;
            const low = i & lowMask;
            const high = (i & ~lowMask) << 1;
-           
            const idx0 = high | low;
            const idx1 = idx0 | (1 << target);
-           
            const a0 = state[idx0];
            const a1 = state[idx1];
-           
            newState[idx0] = add(mul(u00, a0), mul(u01, a1));
            newState[idx1] = add(mul(u10, a0), mul(u11, a1));
        }
@@ -377,24 +400,18 @@ const App: React.FC = () => {
     const applyControlledGate = (type: GateType, ctrl: number, tgt: number) => {
         const newState = [...state];
         const halfStates = numStates / 2;
-
         for (let i = 0; i < halfStates; i++) {
             const lowMask = (1 << tgt) - 1;
             const low = i & lowMask;
             const high = (i & ~lowMask) << 1;
-            
             const idx0 = high | low;
             const idx1 = idx0 | (1 << tgt);
-
             const isControlSet = (idx0 & (1 << ctrl)) !== 0;
-
             if (isControlSet) {
                  const a0 = state[idx0];
                  const a1 = state[idx1];
-
                  if (type === 'CX') {
-                     newState[idx0] = a1;
-                     newState[idx1] = a0;
+                     newState[idx0] = a1; newState[idx1] = a0;
                  } else if (type === 'CZ') {
                      newState[idx1] = mulS(a1, -1);
                  } else if (type === 'CY') {
@@ -411,10 +428,7 @@ const App: React.FC = () => {
     flattenedCircuit.forEach(gate => {
        const T = gate.target;
        const C = gate.control;
-
-       // Skip gates if target/control out of bounds (after resize)
        if (T >= numQubits || (C !== undefined && C >= numQubits)) return;
-
        if (gate.type === 'H') applyGate({r: INV_SQRT_2, i:0}, {r: INV_SQRT_2, i:0}, {r: INV_SQRT_2, i:0}, {r: -INV_SQRT_2, i:0}, T);
        else if (gate.type === 'X') applyGate(zero, one, one, zero, T);
        else if (gate.type === 'Y') applyGate(zero, {r:0, i:-1}, {r:0, i:1}, zero, T);
@@ -427,48 +441,40 @@ const App: React.FC = () => {
            applyControlledGate(gate.type, C, T);
        }
     });
-
     setAmplitudes(state);
   }, [flattenedCircuit, numQubits]);
 
-  // --- Resize Handler ---
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (!isResizing) return;
-      
       const newWidth = window.innerWidth - e.clientX;
       if (newWidth >= 280 && newWidth <= 800) {
         setSidebarWidth(newWidth);
       }
     };
-
     const handleMouseUp = () => {
       setIsResizing(false);
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
     };
-
     if (isResizing) {
       window.addEventListener('mousemove', handleMouseMove);
       window.addEventListener('mouseup', handleMouseUp);
       document.body.style.cursor = 'col-resize';
       document.body.style.userSelect = 'none';
     }
-
     return () => {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
   }, [isResizing]);
 
-  // --- Zoom & Pan Handlers ---
   const handleWheel = (e: React.WheelEvent) => {
       if (e.ctrlKey || e.metaKey) {
           e.preventDefault(); 
           const zoomSensitivity = 0.0015;
           const delta = -e.deltaY * zoomSensitivity;
           const newZoom = Math.min(Math.max(zoom + delta, 0.4), 3.0);
-          
           if (boardRef.current) {
             const rect = boardRef.current.getBoundingClientRect();
             const centerX = rect.left + rect.width / 2;
@@ -529,7 +535,6 @@ const App: React.FC = () => {
     if (!activePopup || isLocked) return;
     const { step, wire } = activePopup;
     const newGrid = grid.map(row => [...row]);
-
     if (gateType === 'DELETE') {
         newGrid[step][wire] = null;
     } else {
@@ -618,15 +623,12 @@ const App: React.FC = () => {
     const idx = parseInt(e.target.value);
     if (isNaN(idx)) return;
     const example = CIRCUIT_EXAMPLES[idx];
-    
-    // Check if example fits in current qubits
     const maxWire = Math.max(...example.gates.map(g => Math.max(g.w, g.c ?? 0)));
     if (maxWire >= numQubits) {
         alert(`This example requires ${maxWire + 1} qubits. Please adjust settings.`);
         e.target.value = "";
         return;
     }
-
     const newGrid = Array.from({ length: numSteps }, () => Array(numQubits).fill(null));
     example.gates.forEach(g => {
         if (g.s < numSteps && g.w < numQubits) {
@@ -637,7 +639,7 @@ const App: React.FC = () => {
     updateGrid(newGrid);
     setProjectTitle(example.name);
     e.target.value = ""; 
-    setTimeout(() => fitToCircuit(newGrid), 50); // Auto-fit
+    setTimeout(() => fitToCircuit(newGrid), 50); 
   };
   
   const handleLoadGates = (gates: Gate[]) => {
@@ -647,14 +649,13 @@ const App: React.FC = () => {
       gates.forEach(gate => {
           if (currentCol >= numSteps) return;
           if (gate.target >= numQubits || (gate.control !== undefined && gate.control >= numQubits)) return;
-
           const isTargetOccupied = newGrid[currentCol][gate.target] !== null;
           const isControlOccupied = gate.control !== undefined ? newGrid[currentCol][gate.control!] !== null : false;
           if (isTargetOccupied || isControlOccupied) currentCol++;
           if (currentCol < numSteps) newGrid[currentCol][gate.target] = gate;
       });
       updateGrid(newGrid);
-      setTimeout(() => fitToCircuit(newGrid), 50); // Auto-fit
+      setTimeout(() => fitToCircuit(newGrid), 50); 
   };
 
   const handleGenerateReport = (studentName: string, password?: string) => {
@@ -678,33 +679,16 @@ const App: React.FC = () => {
 
   return (
     <div className="flex flex-col h-screen bg-slate-950 text-slate-200 font-sans overflow-hidden selection:bg-cyan-500/30">
-      
       <SettingsModal 
           isOpen={isSettingsOpen} 
           onClose={() => setIsSettingsOpen(false)} 
           config={{ qubitCount: numQubits, stepCount: numSteps }}
           onConfigChange={handleConfigChange}
       />
+      <ReportModal isOpen={isReportModalOpen} onClose={() => setIsReportModalOpen(false)} onGenerate={handleGenerateReport} projectTitle={projectTitle} />
+      {rigSpec && <QuantumRigVisualizer spec={rigSpec} numQubits={numQubits} gates={flattenedCircuit} onClose={() => setRigSpec(null)} />}
 
-      <ReportModal
-          isOpen={isReportModalOpen}
-          onClose={() => setIsReportModalOpen(false)}
-          onGenerate={handleGenerateReport}
-          projectTitle={projectTitle}
-      />
-
-      {rigSpec && (
-          <QuantumRigVisualizer 
-             spec={rigSpec} 
-             numQubits={numQubits}
-             gates={flattenedCircuit}
-             onClose={() => setRigSpec(null)} 
-          />
-      )}
-
-      {/* 1. Header Toolbar */}
       <header className="flex items-center justify-between px-6 py-3 bg-slate-900 border-b border-slate-800 shrink-0 z-20 shadow-lg">
-        {/* ... (Header content unchanged) ... */}
         <div className="flex items-center gap-3 group cursor-pointer mr-4">
            <div className="relative w-9 h-9 flex items-center justify-center bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 rounded-lg shadow-[0_0_15px_rgba(168,85,247,0.4)] transition-all duration-300">
                <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -728,7 +712,6 @@ const App: React.FC = () => {
         
         <div className="flex gap-2 items-center overflow-x-auto no-scrollbar max-w-[calc(100vw-80px)] md:max-w-none px-2 mask-linear-fade">
              
-             {/* Magic Model Button */}
              <button 
                 onClick={handleMagicGenerate}
                 disabled={isGeneratingRig}
@@ -745,7 +728,33 @@ const App: React.FC = () => {
 
              <div className="w-px bg-slate-800 mx-1 h-6 shrink-0"></div>
 
-             {/* Undo / Redo Group */}
+             {/* Alignment Controls - Similar to IBM Quantum Composer */}
+             <div className="flex bg-slate-800 rounded p-0.5 gap-0.5 mr-2 shadow-inner border border-slate-700/50 shrink-0">
+               <button 
+                  onClick={() => toggleAlignmentMode('freeform')}
+                  className={`p-1.5 px-3 rounded transition-all flex items-center gap-2 text-xs font-semibold uppercase tracking-wider ${alignmentMode === 'freeform' ? 'bg-cyan-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-700 hover:text-slate-300'}`}
+                  title="Freeform Alignment: Place gates anywhere"
+               >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" /></svg>
+               </button>
+               <button 
+                  onClick={() => toggleAlignmentMode('left')}
+                  className={`p-1.5 px-3 rounded transition-all flex items-center gap-2 text-xs font-semibold uppercase tracking-wider ${alignmentMode === 'left' ? 'bg-cyan-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-700 hover:text-slate-300'}`}
+                  title="Left Alignment: Compress gates to the left"
+               >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" /></svg>
+               </button>
+               <button 
+                  onClick={() => toggleAlignmentMode('layers')}
+                  className={`p-1.5 px-3 rounded transition-all flex items-center gap-2 text-xs font-semibold uppercase tracking-wider ${alignmentMode === 'layers' ? 'bg-cyan-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-700 hover:text-slate-300'}`}
+                  title="Layers Alignment: Synchronize gates into vertical moments"
+               >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
+               </button>
+             </div>
+
+             <div className="w-px bg-slate-800 mx-1 h-6 shrink-0"></div>
+
              <div className="flex bg-slate-800 rounded p-0.5 gap-0.5 mr-2 shadow-inner border border-slate-700/50 shrink-0">
                <button 
                   onClick={undo} 
@@ -805,21 +814,11 @@ const App: React.FC = () => {
           
           <div className="w-px bg-slate-800 mx-1 h-6 shrink-0"></div>
           
-          {/* Report Button */}
-          <button 
-             onClick={() => setIsReportModalOpen(true)}
-             className="p-1.5 px-2 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors shrink-0"
-             title="Generate PDF Report"
-          >
+          <button onClick={() => setIsReportModalOpen(true)} className="p-1.5 px-2 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors shrink-0" title="Generate PDF Report">
              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
           </button>
 
-          {/* Settings Button */}
-          <button 
-             onClick={() => setIsSettingsOpen(true)}
-             className="p-1.5 px-2 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors shrink-0"
-             title="Settings"
-          >
+          <button onClick={() => setIsSettingsOpen(true)} className="p-1.5 px-2 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors shrink-0" title="Settings">
              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
           </button>
           
@@ -842,85 +841,38 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      {/* 2. Main Workspace */}
       <div className="flex flex-1 overflow-hidden relative">
-        
-        {/* A. Gate Palette */}
-        <aside 
-            className={`bg-slate-900 border-r border-slate-800 flex flex-col items-center shrink-0 z-30 shadow-xl transition-all duration-300 overflow-hidden absolute md:relative h-full ${isLocked ? 'opacity-50 pointer-events-none grayscale' : ''}`}
-            style={{ width: isGatePaletteOpen ? '6rem' : 0, padding: isGatePaletteOpen ? '1.5rem 0' : 0, transform: isGatePaletteOpen ? 'translateX(0)' : 'translateX(-100%)' }}
-        >
-          {/* Inner container with fixed width to prevent squishing */}
+        <aside className={`bg-slate-900 border-r border-slate-800 flex flex-col items-center shrink-0 z-30 shadow-xl transition-all duration-300 overflow-hidden absolute md:relative h-full ${isLocked ? 'opacity-50 pointer-events-none grayscale' : ''}`} style={{ width: isGatePaletteOpen ? '6rem' : 0, padding: isGatePaletteOpen ? '1.5rem 0' : 0, transform: isGatePaletteOpen ? 'translateX(0)' : 'translateX(-100%)' }}>
           <div className="w-24 flex flex-col items-center gap-4 overflow-y-auto custom-scrollbar h-full pb-6">
             <div className="text-[10px] uppercase text-slate-500 font-bold tracking-widest mb-2 whitespace-nowrap">Gates</div>
             {PALETTE.map((gate) => (
-                <div
-                key={gate.id}
-                draggable={!isLocked}
-                onDragStart={(e) => handleDragStart(e, gate)}
-                onClick={() => handleGateClick(gate)}
-                className={`w-12 h-12 md:w-14 md:h-14 ${gate.color} flex items-center justify-center rounded-lg cursor-pointer shadow-lg font-bold text-white select-none hover:scale-110 hover:shadow-xl hover:ring-2 ring-white/20 transition-all z-20 active:scale-95 shrink-0`}
-                >
+                <div key={gate.id} draggable={!isLocked} onDragStart={(e) => handleDragStart(e, gate)} onClick={() => handleGateClick(gate)} className={`w-12 h-12 md:w-14 md:h-14 ${gate.color} flex items-center justify-center rounded-lg cursor-pointer shadow-lg font-bold text-white select-none hover:scale-110 hover:shadow-xl hover:ring-2 ring-white/20 transition-all z-20 active:scale-95 shrink-0`}>
                 {gate.id === 'CX' ? '⊕' : gate.id}
                 </div>
             ))}
           </div>
         </aside>
 
-        {/* B. Circuit Grid (Infinite Canvas) */}
-        <main 
-            ref={boardRef}
-            className={`flex-1 overflow-hidden relative bg-slate-950 ${isPanning ? 'cursor-grabbing' : 'cursor-grab'} ${isLocked ? 'cursor-not-allowed' : ''}`}
-            onWheel={handleWheel}
-            onMouseDown={startPan}
-            onMouseMove={doPan}
-            onMouseUp={endPan}
-            onMouseLeave={endPan}
-        >
-          {/* Moving Background Layer */}
-          <div 
-            className="absolute inset-0 pointer-events-none opacity-20"
-            style={{
-                backgroundImage: 'radial-gradient(circle, #475569 1px, transparent 1px)',
-                backgroundSize: `${30 * zoom}px ${30 * zoom}px`,
-                backgroundPosition: `${pan.x}px ${pan.y}px`,
-                // Disable transition during pan for instant feedback
-                transition: isPanning ? 'none' : 'background-size 0.2s, background-position 0.2s'
-            }}
-          />
-          
-          {/* Zoom/Pan Content Container */}
-          <div 
-            className={`absolute top-0 left-0 w-full h-full flex items-center justify-center origin-center ${isPanning ? 'duration-0' : 'transition-transform duration-200 ease-out'}`}
-            style={{
-                transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`
-            }}
-          >
+        <main ref={boardRef} className={`flex-1 overflow-hidden relative bg-slate-950 ${isPanning ? 'cursor-grabbing' : 'cursor-grab'} ${isLocked ? 'cursor-not-allowed' : ''}`} onWheel={handleWheel} onMouseDown={startPan} onMouseMove={doPan} onMouseUp={endPan} onMouseLeave={endPan}>
+          <div className="absolute inset-0 pointer-events-none opacity-20" style={{ backgroundImage: 'radial-gradient(circle, #475569 1px, transparent 1px)', backgroundSize: `${30 * zoom}px ${30 * zoom}px`, backgroundPosition: `${pan.x}px ${pan.y}px`, transition: isPanning ? 'none' : 'background-size 0.2s, background-position 0.2s' }} />
+          <div className={`absolute top-0 left-0 w-full h-full flex items-center justify-center origin-center ${isPanning ? 'duration-0' : 'transition-transform duration-200 ease-out'}`} style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}>
              <div className="relative p-12 min-w-max">
-                 {/* Wire Lines (Layer 0) */}
                  <div className="absolute left-0 right-0 top-0 bottom-0 pointer-events-none z-0 pl-16 pr-8 pt-12">
                     <div className="flex flex-col gap-12">
                        {Array.from({length: numQubits}, (_, q) => (
                          <div key={q} className="relative w-full h-12 flex items-center">
-                           {/* Main Wire */}
                            <div className="w-full h-0.5 bg-slate-700/50 shadow-sm"></div>
-                           {/* Qubit Label */}
                            <div className="absolute -left-12 text-slate-500 font-mono text-sm font-bold flex items-center justify-center w-8 h-8 rounded bg-slate-900 border border-slate-700">q{q}</div>
                          </div>
                        ))}
                     </div>
                  </div>
-
-                 {/* Grid Cells (Layer 1) */}
                  <div className="flex gap-0 relative z-10">
                     {grid.map((step, stepIdx) => {
                        const controllingGates = step.filter(g => g?.control !== undefined);
                        return (
                       <div key={stepIdx} className="gate-cell flex flex-col gap-12 relative w-16 md:w-20 h-full">
-                        {/* Step Separator */}
                         <div className="absolute inset-y-0 left-1/2 w-px bg-slate-800 -z-10 opacity-30 border-dashed border-l border-slate-700/30"></div>
-                        
-                        {/* Control Lines (Vertical) */}
                         {controllingGates.map((g) => {
                             if (!g || g.control === undefined) return null;
                             const controlMin = Math.min(g.target, g.control);
@@ -930,34 +882,16 @@ const App: React.FC = () => {
                                <div key={`${g.id}-line`} className={`absolute left-1/2 -translate-x-1/2 w-1 ${connectorColor} z-0 rounded-full opacity-80 shadow-sm`} style={{ top: `${(controlMin * 6 + 1.5)}rem`, height: `${(controlMax - controlMin) * 6}rem` }}></div>
                             );
                         })}
-
-                        {/* Gates */}
                         {step.map((cell, wireIdx) => {
                            const isOver = dragOverCell?.step === stepIdx && dragOverCell?.wire === wireIdx;
                            const gateColor = cell ? PALETTE.find(p => p.id === cell.type)?.color || 'bg-slate-700' : '';
                            const isControlSource = !cell && step.some(g => g?.control === wireIdx);
                            const connectorColor = isControlSource ? (PALETTE.find(p => p.id === step.find(g => g?.control === wireIdx)?.type)?.color || 'bg-sky-500') : '';
-
                            return (
-                             <div
-                               key={`${stepIdx}-${wireIdx}`}
-                               onDrop={(e) => handleDrop(e, stepIdx, wireIdx)}
-                               onDragOver={(e) => handleDragOver(e, stepIdx, wireIdx)}
-                               onDragLeave={() => setDragOverCell(null)}
-                               onClick={(e) => handleCellClick(e, stepIdx, wireIdx)}
-                               className={`w-12 h-12 mx-auto flex items-center justify-center rounded transition-all duration-200 ${isLocked ? 'cursor-not-allowed opacity-90' : 'cursor-pointer'} ${isOver && !isLocked ? 'bg-slate-700/50 ring-2 ring-blue-500 scale-110' : ''} ${!cell && !isControlSource && !isLocked ? 'hover:bg-slate-800/50 hover:ring-1 hover:ring-slate-700' : ''}`}
-                             >
-                               {cell && (
-                                 <div className={`w-full h-full ${gateColor} flex items-center justify-center rounded shadow-lg font-bold text-white z-20 relative pointer-events-none ring-1 ring-black/20`}>
-                                   {getGateSymbol(cell.type)}
-                                 </div>
-                               )}
-                               {isControlSource && (
-                                  <div className={`w-4 h-4 rounded-full ${connectorColor} shadow-lg z-20 relative transform scale-110 pointer-events-none ring-2 ring-slate-950`}></div>
-                               )}
-                               {!cell && !isControlSource && isOver && !isLocked && (
-                                 <div className="w-3 h-3 rounded-full bg-blue-400/50 animate-pulse pointer-events-none"></div>
-                               )}
+                             <div key={`${stepIdx}-${wireIdx}`} onDrop={(e) => handleDrop(e, stepIdx, wireIdx)} onDragOver={(e) => handleDragOver(e, stepIdx, wireIdx)} onDragLeave={() => setDragOverCell(null)} onClick={(e) => handleCellClick(e, stepIdx, wireIdx)} className={`w-12 h-12 mx-auto flex items-center justify-center rounded transition-all duration-200 ${isLocked ? 'cursor-not-allowed opacity-90' : 'cursor-pointer'} ${isOver && !isLocked ? 'bg-slate-700/50 ring-2 ring-blue-500 scale-110' : ''} ${!cell && !isControlSource && !isLocked ? 'hover:bg-slate-800/50 hover:ring-1 hover:ring-slate-700' : ''}`}>
+                               {cell && <div className={`w-full h-full ${gateColor} flex items-center justify-center rounded shadow-lg font-bold text-white z-20 relative pointer-events-none ring-1 ring-black/20`}>{getGateSymbol(cell.type)}</div>}
+                               {isControlSource && <div className={`w-4 h-4 rounded-full ${connectorColor} shadow-lg z-20 relative transform scale-110 pointer-events-none ring-2 ring-slate-950`}></div>}
+                               {!cell && !isControlSource && isOver && !isLocked && <div className="w-3 h-3 rounded-full bg-blue-400/50 animate-pulse pointer-events-none"></div>}
                              </div>
                            );
                         })}
@@ -967,78 +901,35 @@ const App: React.FC = () => {
                  </div>
               </div>
           </div>
-
-          {/* Zoom Controls HUD */}
           <div className="absolute bottom-6 left-6 flex flex-col gap-2 z-50">
              <div className="bg-slate-900/80 backdrop-blur border border-slate-700 rounded-lg p-1.5 flex flex-col shadow-2xl">
-                <button 
-                  onClick={() => setZoom(z => Math.min(z + 0.2, 3.0))}
-                  className="p-2 hover:bg-slate-800 text-slate-300 rounded"
-                  title="Zoom In"
-                >
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
-                </button>
+                <button onClick={() => setZoom(z => Math.min(z + 0.2, 3.0))} className="p-2 hover:bg-slate-800 text-slate-300 rounded" title="Zoom In"><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg></button>
                 <div className="h-px bg-slate-700 my-1"></div>
-                <button 
-                  onClick={() => setZoom(z => Math.max(z - 0.2, 0.4))}
-                  className="p-2 hover:bg-slate-800 text-slate-300 rounded"
-                  title="Zoom Out"
-                >
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" /></svg>
-                </button>
+                <button onClick={() => setZoom(z => Math.max(z - 0.2, 0.4))} className="p-2 hover:bg-slate-800 text-slate-300 rounded" title="Zoom Out"><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" /></svg></button>
                 <div className="h-px bg-slate-700 my-1"></div>
-                <button 
-                   onClick={() => fitToCircuit()}
-                   className="p-2 hover:bg-slate-800 text-emerald-400 rounded"
-                   title="Fit to Circuit"
-                >
-                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
-                </button>
+                <button onClick={() => fitToCircuit()} className="p-2 hover:bg-slate-800 text-emerald-400 rounded" title="Fit to Circuit"><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg></button>
                  <div className="h-px bg-slate-700 my-1"></div>
-                <button 
-                   onClick={resetView}
-                   className="p-2 hover:bg-slate-800 text-cyan-400 rounded font-bold text-[10px]"
-                   title="Reset View"
-                >
-                   1:1
-                </button>
+                <button onClick={resetView} className="p-2 hover:bg-slate-800 text-cyan-400 rounded font-bold text-[10px]" title="Reset View">1:1</button>
              </div>
-             <div className="bg-slate-950/80 px-2 py-1 rounded text-[10px] text-slate-500 font-mono text-center border border-slate-800">
-                 {Math.round(zoom * 100)}%
-             </div>
+             <div className="bg-slate-950/80 px-2 py-1 rounded text-[10px] text-slate-500 font-mono text-center border border-slate-800">{Math.round(zoom * 100)}%</div>
           </div>
         </main>
 
-        {/* C. Output Visualization & Tools */}
-        <aside 
-            className={`bg-slate-900 border-l border-slate-800 flex flex-col shrink-0 shadow-2xl z-30 absolute right-0 top-0 bottom-0 h-full md:relative transition-[width] ease-in-out ${isResizing ? 'duration-0' : 'duration-300'}`}
-            style={{ width: isSidebarOpen ? sidebarWidth : 0 }}
-        >
+        <aside className={`bg-slate-900 border-l border-slate-800 flex flex-col shrink-0 shadow-2xl z-30 absolute right-0 top-0 bottom-0 h-full md:relative transition-[width] ease-in-out ${isResizing ? 'duration-0' : 'duration-300'}`} style={{ width: isSidebarOpen ? sidebarWidth : 0 }}>
            <div className="absolute left-0 top-0 bottom-0 w-1.5 -ml-1 cursor-col-resize hover:bg-blue-500/50 z-50 transition-colors" onMouseDown={(e) => { e.preventDefault(); setIsResizing(true); }} />
-
            <div className="w-full h-full overflow-hidden flex flex-col">
                <div className="flex border-b border-slate-800 bg-slate-900">
                   {['visuals', 'code', 'tutor', 'hardware', 'solver'].map((tab) => (
-                    <button 
-                        key={tab}
-                        onClick={() => setActiveTab(tab as any)}
-                        className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider hover:bg-slate-800 transition-colors ${activeTab === tab ? 'text-blue-400 border-b-2 border-blue-400 bg-slate-800/50' : 'text-slate-500'}`}
-                    >
-                        {tab === 'visuals' ? 'Output' : tab === 'code' ? 'Code' : tab === 'tutor' ? 'AI Tutor' : tab === 'solver' ? 'Solver' : 'Hardware'}
-                    </button>
+                    <button key={tab} onClick={() => setActiveTab(tab as any)} className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider hover:bg-slate-800 transition-colors ${activeTab === tab ? 'text-blue-400 border-b-2 border-blue-400 bg-slate-800/50' : 'text-slate-500'}`}>{tab === 'visuals' ? 'Output' : tab === 'code' ? 'Code' : tab === 'tutor' ? 'AI Tutor' : tab === 'solver' ? 'Solver' : 'Hardware'}</button>
                   ))}
                </div>
-
                <div className="flex-1 overflow-y-auto custom-scrollbar p-0 bg-slate-900/50">
                   {activeTab === 'visuals' ? (
                      <div className="space-y-6 p-4">
-                        {/* Viz components (keeping existing structure) */}
                         <div className="space-y-4 group">
                            <div className="flex justify-between items-center pr-2">
                              <h3 className="text-xs uppercase text-slate-500 font-bold tracking-widest pl-1">Qubits</h3>
-                             <button onClick={() => setIsFullScreenBloch(true)} className="text-slate-600 hover:text-cyan-400 p-1 rounded-full hover:bg-slate-800 transition-colors">
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
-                             </button>
+                             <button onClick={() => setIsFullScreenBloch(true)} className="text-slate-600 hover:text-cyan-400 p-1 rounded-full hover:bg-slate-800 transition-colors"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg></button>
                            </div>
                            <div className="grid grid-cols-2 gap-2 cursor-pointer relative" onClick={() => setIsFullScreenBloch(true)}>
                               {Array.from({length: numQubits}, (_, q) => (
@@ -1049,24 +940,13 @@ const App: React.FC = () => {
                               ))}
                            </div>
                         </div>
-
                         <div className="flex flex-wrap gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800">
                            {['statevector', 'qsphere', 'phasor', 'measure', 'entanglement', 'matrix', 'tunneling'].map(m => (
-                              <button key={m} onClick={() => setVizMode(m as any)} className={`flex-1 py-1 px-2 text-[10px] uppercase font-bold rounded transition-colors whitespace-nowrap ${vizMode === m ? 'bg-slate-800 text-cyan-400 shadow ring-1 ring-slate-700' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-900'}`}>
-                                 {m === 'entanglement' ? 'Entangle' : m === 'qsphere' ? 'Q-Sphere' : m === 'matrix' ? 'Matrix' : m}
-                              </button>
+                              <button key={m} onClick={() => setVizMode(m as any)} className={`flex-1 py-1 px-2 text-[10px] uppercase font-bold rounded transition-colors whitespace-nowrap ${vizMode === m ? 'bg-slate-800 text-cyan-400 shadow ring-1 ring-slate-700' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-900'}`}>{m === 'entanglement' ? 'Entangle' : m === 'qsphere' ? 'Q-Sphere' : m === 'matrix' ? 'Matrix' : m}</button>
                            ))}
                         </div>
-
                         <div className={`relative bg-slate-950 rounded-lg border border-slate-800 overflow-hidden ${vizMode === 'tunneling' ? 'h-[500px]' : 'min-h-[300px]'} flex items-center justify-center shadow-inner group`}>
-                           <button 
-                                onClick={() => setIsFullScreenViz(true)}
-                                className="absolute top-2 right-2 p-1.5 bg-slate-900/80 text-slate-400 hover:text-white rounded border border-slate-700 opacity-0 group-hover:opacity-100 transition-opacity z-10"
-                                title="Full Screen"
-                           >
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
-                           </button>
-
+                           <button onClick={() => setIsFullScreenViz(true)} className="absolute top-2 right-2 p-1.5 bg-slate-900/80 text-slate-400 hover:text-white rounded border border-slate-700 opacity-0 group-hover:opacity-100 transition-opacity z-10" title="Full Screen"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg></button>
                            {vizMode === 'statevector' && <StatevectorVisualizer amplitudes={amplitudes} />}
                            {vizMode === 'qsphere' && <QSphere amplitudes={amplitudes} />}
                            {vizMode === 'phasor' && <PolarPlotVisualizer amplitudes={amplitudes} />}
@@ -1077,25 +957,13 @@ const App: React.FC = () => {
                         </div>
                      </div>
                   ) : activeTab === 'code' ? (
-                     <div className="h-full flex flex-col">
-                        <CodeViewer gates={flattenedCircuit} numQubits={numQubits} />
-                     </div>
+                     <div className="h-full flex flex-col"><CodeViewer gates={flattenedCircuit} numQubits={numQubits} /></div>
                   ) : activeTab === 'tutor' ? (
-                     <div className="h-full flex flex-col">
-                        <ChatInterface currentGates={flattenedCircuit} onApplyCircuit={handleLoadGates} numQubits={numQubits} />
-                     </div>
+                     <div className="h-full flex flex-col"><ChatInterface currentGates={flattenedCircuit} onApplyCircuit={handleLoadGates} numQubits={numQubits} /></div>
                   ) : activeTab === 'solver' ? (
-                     <div className="h-full flex flex-col">
-                        <QuantumSolver onLoadGates={handleLoadGates} />
-                     </div>
+                     <div className="h-full flex flex-col"><QuantumSolver onLoadGates={handleLoadGates} /></div>
                   ) : (
-                    <div className="h-full flex flex-col">
-                        <HardwareBridge 
-                            amplitudes={amplitudes} 
-                            numQubits={numQubits} 
-                            onCircuitControl={handleHardwareControl}
-                        />
-                    </div>
+                    <div className="h-full flex flex-col"><HardwareBridge amplitudes={amplitudes} numQubits={numQubits} onCircuitControl={handleHardwareControl} /></div>
                   )}
                </div>
            </div>
@@ -1105,36 +973,28 @@ const App: React.FC = () => {
            <GateSelector x={activePopup.x} y={activePopup.y} palette={PALETTE} onSelect={handlePopupSelect} onClose={() => setActivePopup(null)} />
         )}
 
-        {/* Bloch Sphere Full Screen Modal */}
         {isFullScreenBloch && (
             <div className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-xl flex flex-col animate-in fade-in duration-300">
                 <div className="p-6 flex justify-between items-center border-b border-slate-800/50 bg-slate-900/50">
-                   <div className="flex items-center gap-4">
-                       <h2 className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-purple-500">Hilbert Space</h2>
-                   </div>
+                   <div className="flex items-center gap-4"><h2 className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-purple-500">Hilbert Space</h2></div>
                    <button onClick={() => setIsFullScreenBloch(false)} className="p-3 bg-slate-900 rounded-full hover:bg-slate-800 border border-slate-700 text-slate-300 transition-all">Close</button>
                 </div>
                 <div className="flex-1 overflow-auto p-8 lg:p-12 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 lg:gap-12 items-center justify-items-center">
                    {Array.from({length: numQubits}, (_, q) => (
                       <div key={q} className="flex flex-col items-center gap-6 animate-in zoom-in-50 duration-500" style={{ animationDelay: `${q * 100}ms` }}>
                           <div className="text-2xl font-bold text-slate-300 font-mono">Qubit {q}</div>
-                          <div className="bg-slate-900/30 rounded-full p-4 border border-slate-800/50 shadow-2xl">
-                             <BlochSphere state={getReducedState(q)} size={350} />
-                          </div>
+                          <div className="bg-slate-900/30 rounded-full p-4 border border-slate-800/50 shadow-2xl"><BlochSphere state={getReducedState(q)} size={350} /></div>
                       </div>
                    ))}
                 </div>
             </div>
         )}
 
-        {/* General Visualizer Full Screen Modal */}
         {isFullScreenViz && (
             <div className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-xl flex flex-col animate-in fade-in duration-200">
                 <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
                      <h2 className="text-xl font-bold text-cyan-400 uppercase tracking-widest">{vizMode === 'entanglement' ? 'Entanglement Graph' : vizMode === 'qsphere' ? 'Q-Sphere Superposition' : vizMode === 'matrix' ? 'Unitary Matrix' : vizMode}</h2>
-                     <button onClick={() => setIsFullScreenViz(false)} className="p-2 bg-slate-800 rounded-full hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 transition-colors">
-                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                     </button>
+                     <button onClick={() => setIsFullScreenViz(false)} className="p-2 bg-slate-800 rounded-full hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 transition-colors"><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
                 </div>
                 <div className="flex-1 p-8 overflow-hidden flex items-center justify-center">
                      <div className="w-full h-full max-w-5xl bg-slate-900/50 rounded-xl border border-slate-800 p-6 shadow-2xl relative">
@@ -1149,7 +1009,6 @@ const App: React.FC = () => {
                 </div>
             </div>
         )}
-
       </div>
     </div>
   );
